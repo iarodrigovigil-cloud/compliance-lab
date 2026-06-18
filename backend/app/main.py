@@ -414,10 +414,10 @@ async def estadisticas(db=Depends(get_db)):
 
 @app.get("/app", tags=["Frontend"])
 async def frontend():
-    index = FRONTEND_DIR / "index.html"
-    if not index.exists():
-        raise HTTPException(404, f"Frontend no encontrado en {index}")
-    return FileResponse(str(index))
+    from fastapi.responses import HTMLResponse
+    import httpx
+    html = open(Path(__file__).parent.parent.parent / "frontend" / "public" / "index.html").read()
+    return HTMLResponse(html)
 
 # ══════════════════════════════════════════
 # GENERACIÓN SAR · PASO 8 ⭐ NUEVO
