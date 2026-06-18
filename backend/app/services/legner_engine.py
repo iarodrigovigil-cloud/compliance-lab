@@ -1,0 +1,284 @@
+"""
+============================================================
+ COMPLIANCE LAB · Motor LegNER
+ JRV Lab S.L. · 2026
+
+ Este archivo va en:
+   compliance-lab/backend/app/services/legner_engine.py
+
+ Qué hace:
+   1. Lee un PDF y extrae el texto
+   2. Llama a Claude API para clasificar el tipo de documento
+   3. Extrae los campos KYC según el tipo detectado
+   4. Devuelve todo estructurado en JSON
+============================================================
+"""
+
+import anthropic
+import pdfplumber
+import json
+import os
+from pathlib import Path
+
+# ── Leer la API Key del archivo .env
+from dotenv import load_dotenv
+load_dotenv()
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# ── Los 8 tipos de documento KYC que reconoce LegNER
+TIPOS_DOCUMENTO = {
+    "nota_simple":             "Nota Simple Registral",
+    "certificado_vigencia":    "Certificado de Vigencia y Cargo",
+    "escritura_constitucion":  "Escritura de Constitución",
+    "acta_titularidad":        "Acta de Titularidad Real",
+    "declaracion_titularidad": "Declaración de Titularidad Real",
+    "documento_identidad":     "Documento de Identidad (DNI/Pasaporte)",
+    "certificado_fiscal":      "Certificado Fiscal (ATR)",
+    "extranjero":              "Documento Extranjero · Verificación Manual",
+}
+
+
+def extraer_texto_pdf(ruta_pdf: str) -> str:
+    """
+    Paso 1: Lee el PDF y extrae todo el texto.
+    pdfplumber es mejor que PyPDF2 para documentos legales españoles.
+    """
+    texto = ""
+    try:
+        with pdfplumber.open(ruta_pdf) as pdf:
+            for pagina in pdf.pages:
+                texto_pagina = pagina.extract_text()
+                if texto_pagina:
+                    texto += texto_pagina + "\n"
+    except Exception as e:
+        raise Exception(f"Error leyendo PDF: {e}")
+
+    if not texto.strip():
+        raise Exception("El PDF no tiene texto extraíble (puede ser una imagen escaneada)")
+
+    return texto.strip()
+
+
+def clasificar_documento(texto: str) -> dict:
+    """
+    Paso 2: Llama a Claude para clasificar el tipo de documento.
+    Claude lee el texto y decide qué tipo de documento KYC es.
+    """
+    cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    prompt = f"""Eres LegNER, un clasificador experto de documentos KYC del sistema legal español.
+
+Analiza el siguiente texto de un documento y clasifícalo en UNO de estos 8 tipos:
+
+1. nota_simple - Nota Simple Registral del Registro Mercantil
+2. certificado_vigencia - Certificado de Vigencia y Cargo de administradores
+3. escritura_constitucion - Escritura de Constitución de sociedad
+4. acta_titularidad - Acta de Manifestaciones de Titularidad Real
+5. declaracion_titularidad - Declaración de Titularidad Real
+6. documento_identidad - DNI, NIE o Pasaporte
+7. certificado_fiscal - Certificado de situación fiscal (ATR)
+8. extranjero - Documento de registro extranjero (requiere verificación manual)
+
+TEXTO DEL DOCUMENTO (primeras 2000 caracteres):
+{texto[:2000]}
+
+Responde SOLO con este JSON exacto, sin texto adicional:
+{{
+    "tipo": "codigo_del_tipo",
+    "nombre": "Nombre completo del tipo",
+    "confianza": 95,
+    "justificacion": "Por qué has clasificado así en una frase",
+    "accion": "procesar"
+}}
+
+Para "accion" usa: "procesar" (tipos 1-7) o "manual" (tipo 8 extranjero)
+Para "confianza" usa un número del 0 al 100."""
+
+    respuesta = cliente.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    texto_respuesta = respuesta.content[0].text.strip()
+
+    # Limpiar posibles backticks de markdown
+    if texto_respuesta.startswith("```"):
+        texto_respuesta = texto_respuesta.split("```")[1]
+        if texto_respuesta.startswith("json"):
+            texto_respuesta = texto_respuesta[4:]
+
+    return json.loads(texto_respuesta)
+
+
+def extraer_campos(texto: str, tipo_documento: str) -> list:
+    """
+    Paso 3: Extrae los campos KYC específicos según el tipo de documento.
+    Claude lee el texto y extrae exactamente los campos que necesitamos.
+    """
+    cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    # Campos a extraer según el tipo de documento
+    campos_por_tipo = {
+        "nota_simple": [
+            "fecha_documento", "denominacion_social", "domicilio_social",
+            "nif_cif", "cnae", "objeto_social", "fecha_inicio_operaciones",
+            "nombre_administrador", "dni_administrador", "cargo_administrador",
+            "fecha_nombramiento_administrador"
+        ],
+        "certificado_vigencia": [
+            "fecha_documento", "denominacion_social", "nif_cif",
+            "nombre_administrador", "dni_administrador", "cargo_administrador",
+            "fecha_nombramiento", "fecha_caducidad", "notario", "numero_protocolo"
+        ],
+        "escritura_constitucion": [
+            "fecha_escritura", "denominacion_social", "domicilio_social",
+            "nif_cif", "objeto_social", "capital_social", "notario",
+            "numero_protocolo", "fecha_inscripcion_registro"
+        ],
+        "acta_titularidad": [
+            "fecha_documento", "denominacion_entidad", "nombre_titular",
+            "nif_titular", "nacionalidad_titular", "fecha_nacimiento_titular",
+            "porcentaje_participacion", "tipo_dominio", "declaracion_firmada"
+        ],
+        "certificado_fiscal": [
+            "fecha_documento", "denominacion_social", "nif_cif",
+            "situacion_censal", "epigrafes_iae", "fecha_alta",
+            "domicilio_fiscal", "tipo_certificado"
+        ],
+    }
+
+    campos = campos_por_tipo.get(tipo_documento, [
+        "fecha_documento", "denominacion_social", "nif_cif", "tipo_entidad"
+    ])
+
+    prompt = f"""Eres LegNER, un extractor experto de campos KYC de documentos legales españoles.
+
+Del siguiente documento de tipo "{TIPOS_DOCUMENTO.get(tipo_documento, tipo_documento)}", extrae estos campos:
+{json.dumps(campos, ensure_ascii=False, indent=2)}
+
+TEXTO DEL DOCUMENTO:
+{texto[:3000]}
+
+Reglas:
+- Si un campo no aparece en el documento, usa null
+- Las fechas en formato DD/MM/YYYY
+- El NIF/CIF sin guiones (ej: B12345678)
+- Para campos de administradores (pueden ser varios), devuelve una lista
+
+Responde SOLO con este JSON, sin texto adicional:
+{{
+    "campos": [
+        {{"nombre": "nombre_del_campo", "valor": "valor extraído o null", "confianza": 95}},
+        ...
+    ]
+}}"""
+
+    respuesta = cliente.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    texto_respuesta = respuesta.content[0].text.strip()
+
+    if texto_respuesta.startswith("```"):
+        texto_respuesta = texto_respuesta.split("```")[1]
+        if texto_respuesta.startswith("json"):
+            texto_respuesta = texto_respuesta[4:]
+
+    resultado = json.loads(texto_respuesta)
+    return resultado.get("campos", [])
+
+
+def procesar_documento_kyc(ruta_pdf: str) -> dict:
+    """
+    Función principal: pipeline completo de un documento KYC.
+    Llama a los 3 pasos en orden y devuelve el resultado final.
+
+    Uso:
+        resultado = procesar_documento_kyc("C:/ruta/al/documento.pdf")
+        print(resultado)
+    """
+    print(f"\n{'='*50}")
+    print(f"📄 Procesando: {Path(ruta_pdf).name}")
+    print(f"{'='*50}")
+
+    # PASO 1: Extraer texto del PDF
+    print("1️⃣  Extrayendo texto del PDF...")
+    texto = extraer_texto_pdf(ruta_pdf)
+    print(f"   ✅ {len(texto)} caracteres extraídos")
+
+    # PASO 2: Clasificar el documento
+    print("2️⃣  Clasificando documento con LegNER...")
+    clasificacion = clasificar_documento(texto)
+    print(f"   ✅ Tipo: {clasificacion['nombre']}")
+    print(f"   ✅ Confianza: {clasificacion['confianza']}%")
+    print(f"   ✅ Acción: {clasificacion['accion']}")
+
+    # PASO 3: Extraer campos (solo si no es extranjero)
+    campos = []
+    if clasificacion['accion'] == 'procesar':
+        print("3️⃣  Extrayendo campos KYC...")
+        campos = extraer_campos(texto, clasificacion['tipo'])
+        campos_con_valor = [c for c in campos if c.get('valor') is not None]
+        print(f"   ✅ {len(campos_con_valor)}/{len(campos)} campos extraídos")
+    else:
+        print("3️⃣  Documento extranjero → requiere revisión manual")
+
+    # Resultado final
+    resultado = {
+        "archivo": Path(ruta_pdf).name,
+        "clasificacion": clasificacion,
+        "campos_extraidos": campos,
+        "resumen": {
+            "tipo_documento": clasificacion['tipo'],
+            "nombre_tipo": clasificacion['nombre'],
+            "confianza_clasificacion": clasificacion['confianza'],
+            "total_campos": len(campos),
+            "campos_con_valor": len([c for c in campos if c.get('valor')]),
+            "requiere_manual": clasificacion['accion'] == 'manual'
+        }
+    }
+
+    print(f"\n✅ COMPLETADO: {Path(ruta_pdf).name}")
+    return resultado
+
+
+# ============================================================
+# PRUEBA RÁPIDA — ejecuta este archivo directamente para probar
+# Uso: python legner_engine.py
+# ============================================================
+if __name__ == "__main__":
+    import sys
+
+    print("\n🛡️  COMPLIANCE LAB · Motor LegNER · Prueba")
+    print("   JRV Lab S.L. · 2026\n")
+
+    # Si pasas una ruta como argumento: python legner_engine.py mi_documento.pdf
+    if len(sys.argv) > 1:
+        ruta = sys.argv[1]
+    else:
+        # Busca PDFs en la carpeta uploads automáticamente
+        uploads = Path(__file__).parent.parent.parent / "uploads"
+        pdfs = list(uploads.glob("*.pdf"))
+
+        if not pdfs:
+            print("⚠️  No hay PDFs en la carpeta uploads/")
+            print(f"   Copia un PDF a: {uploads}")
+            print("   O ejecuta: python legner_engine.py ruta/al/documento.pdf")
+            sys.exit(1)
+
+        ruta = str(pdfs[0])
+        print(f"📂 Usando primer PDF encontrado: {Path(ruta).name}")
+
+    try:
+        resultado = procesar_documento_kyc(ruta)
+        print("\n" + "="*50)
+        print("📊 RESULTADO COMPLETO:")
+        print("="*50)
+        print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        print("   Comprueba que el archivo .env tiene la ANTHROPIC_API_KEY correcta")
