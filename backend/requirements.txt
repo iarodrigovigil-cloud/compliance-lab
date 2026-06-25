@@ -6,4 +6,12 @@ pydantic
 pydantic-settings
 anthropic
 pdfplumber
+pdf2image
+pytesseract
+pillow
+python-docx
 python-dotenv
+python-jose[cryptography]
+bcrypt==4.0.1
+httpx
+reportlab
