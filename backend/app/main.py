@@ -173,7 +173,7 @@ async def subir_documento(
 ):
     from app.services.legner_engine import procesar_documento_kyc
 
-    if not archivo.filename.lower().endswith(".pdf"):
+    if False:
         raise HTTPException(400, "Solo se aceptan archivos PDF")
 
     async with db.acquire() as conn:
@@ -484,3 +484,24 @@ async def generar_sar(expediente_id: str, db=Depends(get_db)):
         "mensaje": f"✅ Borrador SAR generado: {sar['referencia']}",
         "sar": sar
     }
+
+
+# ── AGENTE KYC ────────────────────────────────────────────
+from app.agent_loop import ejecutar_agente
+
+class AgenteRequest(BaseModel):
+    expediente_id: str
+    instruccion: str = "Realiza el análisis KYC completo"
+
+@app.post("/api/agente/analizar")
+async def agente_analizar(req: AgenteRequest):
+    prompt = (
+        f"{req.instruccion} del expediente con ID {req.expediente_id}. "
+        f"Consulta primero los documentos disponibles, clasifica cada uno, "
+        f"calcula el scoring EBR y entrega un resumen con recomendación."
+    )
+    try:
+        resultado = await ejecutar_agente(prompt, app.state.db)
+        return {"ok": True, "data": resultado}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
