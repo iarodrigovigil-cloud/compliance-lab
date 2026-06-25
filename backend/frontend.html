@@ -178,9 +178,62 @@ tr:hover td { background: #f9fafb; }
 .sar-ref-sub { font-size: 11px; opacity: 0.75; margin-top: 2px; }
 .sar-plazo { font-size: 12px; text-align: right; }
 .sar-plazo-num { font-size: 20px; font-weight: 800; }
+
+/* ── LOGIN ─────────────────────────────────────────── */
+#login-screen {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0D1B2A 0%, #003C96 60%, #1464B4 100%);
+}
+.login-box {
+  background: #fff; border-radius: 16px; padding: 48px 40px;
+  width: 100%; max-width: 400px;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.4);
+}
+.login-logo { text-align: center; margin-bottom: 32px; }
+.login-logo-title { font-size: 22px; font-weight: 800; color: #003C96; }
+.login-logo-sub { font-size: 12px; color: #6b7280; margin-top: 4px; }
+.login-field { margin-bottom: 18px; }
+.login-field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+.login-field input {
+  width: 100%; padding: 10px 14px; border: 1px solid #d1d5db;
+  border-radius: 8px; font-size: 14px; outline: none; transition: border 0.2s;
+}
+.login-field input:focus { border-color: #003C96; }
+.login-btn {
+  width: 100%; padding: 12px; background: #003C96; color: #fff;
+  border: none; border-radius: 8px; font-size: 15px; font-weight: 700;
+  cursor: pointer; transition: background 0.2s;
+}
+.login-btn:hover { background: #002d7a; }
+.login-error { color: #dc2626; font-size: 13px; text-align: center; margin-top: 12px; min-height: 20px; }
+.login-footer { text-align: center; font-size: 11px; color: #9ca3af; margin-top: 24px; }
+#app-screen { display: none; }
+
 </style>
 </head>
 <body>
+
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-title">🛡️ Compliance Lab</div>
+      <div class="login-logo-sub">JRV Lab S.L. · Plataforma KYC · Ley 10/2010</div>
+    </div>
+    <div class="login-field">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="usuario@empresa.es" onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <div class="login-field">
+      <label>Contraseña</label>
+      <input type="password" id="login-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <button class="login-btn" onclick="doLogin()">Acceder</button>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-footer">Acceso restringido · Solo usuarios autorizados</div>
+  </div>
+</div>
+<div id="app-screen">
 <div class="layout">
 
   <!-- SIDEBAR -->
@@ -209,7 +262,7 @@ tr:hover td { background: #f9fafb; }
         <div class="topbar-title" id="topbar-title">Dashboard</div>
         <div class="topbar-sub" id="topbar-sub">Resumen general · KYC Automatizado</div>
       </div>
-      <div class="topbar-right">
+      <div class="topbar-right"><span id="topbar-user" style="font-size:12px;color:#6b7280;margin-right:8px"></span><button class="btn btn-outline btn-sm" onclick="doLogout()">Salir</button>
         <div class="status-dot"></div>
         <div class="status-txt">API conectada</div>
         <button class="btn btn-primary" onclick="showModal('nuevo-expediente')">+ Nuevo expediente</button>
@@ -808,7 +861,70 @@ async function cargarAudit(id) {
     </div></div>`).join('');
 }
 
-cargarDashboard();
+
+// ── AUTH ──────────────────────────────────────────────────
+const API = '';
+let authToken = sessionStorage.getItem('cl_token') || null;
+let currentUser = JSON.parse(sessionStorage.getItem('cl_user') || 'null');
+
+function getHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': authToken ? 'Bearer ' + authToken : ''
+  };
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const errDiv = document.getElementById('login-error');
+  errDiv.textContent = '';
+  if (!email || !pass) { errDiv.textContent = 'Introduce email y contraseña'; return; }
+  try {
+    const r = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(email)}&password=${encodeURIComponent(pass)}`
+    });
+    const d = await r.json();
+    if (!r.ok) { errDiv.textContent = d.detail || 'Credenciales incorrectas'; return; }
+    authToken = d.access_token;
+    currentUser = { email, nombre: d.nombre, rol: d.rol };
+    sessionStorage.setItem('cl_token', authToken);
+    sessionStorage.setItem('cl_user', JSON.stringify(currentUser));
+    mostrarApp();
+  } catch(e) {
+    errDiv.textContent = 'Error de conexión';
+  }
+}
+
+function mostrarApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display = 'block';
+  const userEl = document.getElementById('topbar-user');
+  if (userEl && currentUser) userEl.textContent = currentUser.nombre + ' · ' + currentUser.rol;
+  cargarDashboard();
+}
+
+function doLogout() {
+  authToken = null; currentUser = null;
+  sessionStorage.removeItem('cl_token');
+  sessionStorage.removeItem('cl_user');
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app-screen').style.display = 'none';
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-pass').value = '';
+}
+
+// Al cargar: si hay token en sesión, mostrar app; si no, mostrar login
+if (authToken) {
+  mostrarApp();
+} else {
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+
 </script>
+</div>
 </body>
 </html>
