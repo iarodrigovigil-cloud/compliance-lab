@@ -543,3 +543,58 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db=Depends(get_db))
 @app.get("/auth/me", tags=["Auth"])
 async def me(user=Depends(get_current_user)):
     return user
+
+# ── LISTAS DE SANCIONES ───────────────────────────────────
+from app.services.sanctions_engine import consultar_sanciones
+
+@app.get("/api/sanciones/consultar", tags=["Sanciones · Art. 9 Ley 10/2010"])
+async def consultar_sanciones_endpoint(nombre: str, nif: str = None):
+    resultado = await consultar_sanciones(nombre, nif)
+    return resultado
+
+@app.get("/api/sanciones/expediente/{expediente_id}", tags=["Sanciones · Art. 9 Ley 10/2010"])
+async def sanciones_expediente(expediente_id: str, db=Depends(get_db)):
+    async with db.acquire() as conn:
+        exp = await conn.fetchrow(
+            "SELECT denominacion, nif FROM expedientes WHERE id=$1",
+            expediente_id
+        )
+    if not exp:
+        raise HTTPException(404, "Expediente no encontrado")
+    resultado = await consultar_sanciones(exp["denominacion"], exp["nif"])
+    return resultado
+
+# ── EXPORTACIÓN PDF ───────────────────────────────────────
+from app.services.pdf_engine import generar_pdf_kyc
+from fastapi.responses import Response
+
+@app.get("/api/expedientes/{expediente_id}/pdf", tags=["Informes PDF"])
+async def exportar_pdf(expediente_id: str, db=Depends(get_db)):
+    async with db.acquire() as conn:
+        expediente = await conn.fetchrow(
+            "SELECT * FROM expedientes WHERE id=$1", expediente_id
+        )
+        campos = await conn.fetch(
+            "SELECT nombre_campo, valor, confianza FROM campos_extraidos WHERE expediente_id=$1",
+            expediente_id
+        )
+        scoring = await conn.fetchrow(
+            "SELECT * FROM scoring_aml WHERE expediente_id=$1 ORDER BY fecha_calculo DESC LIMIT 1",
+            expediente_id
+        )
+
+    if not expediente:
+        raise HTTPException(404, "Expediente no encontrado")
+
+    campos_lista  = [dict(c) for c in campos]
+    scoring_dict  = dict(scoring) if scoring else {}
+    exp_dict      = dict(expediente)
+
+    pdf_bytes = generar_pdf_kyc(exp_dict, campos_lista, scoring_dict)
+
+    nombre_archivo = f"KYC_{exp_dict.get('denominacion','expediente').replace(' ','_')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
+    )
