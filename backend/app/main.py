@@ -505,3 +505,41 @@ async def agente_analizar(req: AgenteRequest):
         return {"ok": True, "data": resultado}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+# ── AUTENTICACIÓN JWT ─────────────────────────────────────
+from app.auth import hash_password, verificar_password, crear_token, get_current_user
+from fastapi.security import OAuth2PasswordRequestForm
+
+@app.post("/auth/registro", tags=["Auth"])
+async def registro(email: str, nombre: str, password: str, rol: str = "aml_officer", db=Depends(get_db)):
+    async with db.acquire() as conn:
+        existe = await conn.fetchrow("SELECT id FROM usuarios WHERE email=$1", email)
+        if existe:
+            raise HTTPException(400, "Email ya registrado")
+        await conn.execute(
+            """INSERT INTO usuarios (email, nombre, rol, password_hash)
+               VALUES ($1,$2,$3,$4)""",
+            email, nombre, rol, hash_password(password)
+        )
+    return {"ok": True, "mensaje": f"Usuario {email} creado"}
+
+@app.post("/auth/login", tags=["Auth"])
+async def login(form: OAuth2PasswordRequestForm = Depends(), db=Depends(get_db)):
+    async with db.acquire() as conn:
+        usuario = await conn.fetchrow(
+            "SELECT id, email, nombre, rol, password_hash FROM usuarios WHERE email=$1 AND activo=true",
+            form.username
+        )
+    if not usuario or not verificar_password(form.password, usuario["password_hash"]):
+        raise HTTPException(401, "Email o contraseña incorrectos")
+    token = crear_token({
+        "sub": usuario["email"],
+        "rol": usuario["rol"],
+        "id":  str(usuario["id"]),
+        "nombre": usuario["nombre"]
+    })
+    return {"access_token": token, "token_type": "bearer", "rol": usuario["rol"], "nombre": usuario["nombre"]}
+
+@app.get("/auth/me", tags=["Auth"])
+async def me(user=Depends(get_current_user)):
+    return user
