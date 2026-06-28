@@ -1,7 +1,6 @@
 # ── agent_tools.py ──────────────────────────────────────
 import os
 
-# ── 1. SCHEMA: las tools que Claude puede usar
 TOOLS_SCHEMA = [
     {
         "name": "clasificar_documento",
@@ -17,7 +16,7 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "calcular_riesgo_ebr",
-        "description": "Calcula el scoring EBR (riesgo AML) de un expediente.",
+        "description": "Calcula el scoring EBR (riesgo AML) de un expediente, incluyendo datos BORME si están disponibles.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -61,12 +60,25 @@ TOOLS_SCHEMA = [
             },
             "required": ["expediente_id", "accion"]
         }
+    },
+    {
+        "name": "verify_company_mercantil",
+        "description": "Consulta datos BORME de una empresa en el Registro Mercantil via OpenMercantil API.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nif":           {"type": "string", "description": "NIF/CIF de la empresa"},
+                "expediente_id": {"type": "string", "description": "UUID del expediente"}
+            },
+            "required": ["nif"]
+        }
     }
 ]
 
 
-# ── 2. EJECUTOR: cuando Claude elige una tool, aquí se llama
-async def ejecutar_tool(nombre: str, inputs: dict, db_pool) -> str:
+async def ejecutar_tool(nombre: str, inputs: dict, db_pool, session_context: dict = None) -> str:
+    if session_context is None:
+        session_context = {}
 
     if nombre == "clasificar_documento":
         from app.services.legner_engine import extraer_campos
@@ -74,9 +86,18 @@ async def ejecutar_tool(nombre: str, inputs: dict, db_pool) -> str:
         resultado = extraer_campos(inputs["texto"], tipo)
         return str(resultado)
 
+    elif nombre == "verify_company_mercantil":
+        from app.services.mercantil_engine import consultar_borme
+        nif = inputs.get("nif", "")
+        resultado = await consultar_borme(nif)
+        # Guardar en session_context para que EBR lo use automáticamente
+        if resultado.get("encontrado"):
+            session_context["datos_borme"] = resultado
+            session_context["expediente_id"] = inputs.get("expediente_id", "")
+        return str(resultado)
+
     elif nombre == "calcular_riesgo_ebr":
         from app.services.ebr_engine import calcular_ebr
-        # Obtener campos y denominacion de la BD antes de llamar a EBR
         async with db_pool.acquire() as conn:
             exp = await conn.fetchrow(
                 "SELECT denominacion, nif FROM expedientes WHERE id=$1",
@@ -89,8 +110,12 @@ async def ejecutar_tool(nombre: str, inputs: dict, db_pool) -> str:
         campos_lista = [dict(c) for c in campos]
         denominacion = dict(exp)["denominacion"] if exp else "Desconocido"
         nif = dict(exp).get("nif") if exp else None
+
+        # Usar datos BORME del session_context si están disponibles
+        datos_borme = session_context.get("datos_borme")
+
         resultado = calcular_ebr(
-            inputs["expediente_id"], campos_lista, denominacion, nif
+            inputs["expediente_id"], campos_lista, denominacion, nif, datos_borme
         )
         return str(resultado)
 

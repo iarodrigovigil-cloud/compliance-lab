@@ -7,19 +7,26 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 SYSTEM_PROMPT = """Eres el Agente KYC de Compliance Lab, sistema AML español.
 Tienes herramientas para analizar expedientes según Ley 10/2010 y SEPBLAC.
-Orden lógico: primero consulta el expediente, luego clasifica documentos,
-luego calcula EBR, y si el riesgo es alto genera borrador SAR.
+
+Orden lógico recomendado:
+1. consultar_expediente — ver documentos y campos disponibles
+2. verify_company_mercantil — verificar datos BORME del Registro Mercantil
+3. calcular_riesgo_ebr — calcular score EBR con datos BORME integrados
+4. generar_sar_borrador — solo si score ≥ 70
+5. guardar_resultado — guardar conclusión en audit trail
+
 Entrega un resumen estructurado con: documentos encontrados, campos clave
-extraídos, nivel de riesgo EBR y recomendación final."""
+extraídos, datos BORME, nivel de riesgo EBR y recomendación final."""
+
 
 async def ejecutar_agente(prompt_usuario: str, db_pool) -> dict:
     mensajes = [{"role": "user", "content": prompt_usuario}]
     tools_usadas = []
     pasos = []
+    session_context = {}  # Comparte datos entre iteraciones (ej: datos BORME)
     max_iteraciones = 10
 
     for iteracion in range(max_iteraciones):
-
         respuesta = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
@@ -36,7 +43,8 @@ async def ejecutar_agente(prompt_usuario: str, db_pool) -> dict:
             return {
                 "respuesta_final": texto_final,
                 "tools_usadas": tools_usadas,
-                "pasos": pasos
+                "pasos": pasos,
+                "datos_borme": session_context.get("datos_borme")
             }
 
         if respuesta.stop_reason == "tool_use":
@@ -52,10 +60,12 @@ async def ejecutar_agente(prompt_usuario: str, db_pool) -> dict:
                     continue
 
                 nombre_tool = bloque.name
-                inputs_tool  = bloque.input
+                inputs_tool = bloque.input
                 tools_usadas.append(nombre_tool)
 
-                resultado = await ejecutar_tool(nombre_tool, inputs_tool, db_pool)
+                resultado = await ejecutar_tool(
+                    nombre_tool, inputs_tool, db_pool, session_context
+                )
 
                 pasos.append({
                     "tool": nombre_tool,
