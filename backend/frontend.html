@@ -881,7 +881,61 @@ async function cargarAudit(id) {
     </div></div>`).join('');
 }
 
-cargarDashboard();
+// ── AUTH ────────────────────────────────────────────────
+let authToken   = sessionStorage.getItem('cl_token') || null;
+let currentUser = JSON.parse(sessionStorage.getItem('cl_user') || 'null');
+
+function getHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': authToken ? 'Bearer ' + authToken : ''
+  };
+}
+
+async function doLogin() {
+  const email  = document.getElementById('login-email').value.trim();
+  const pass   = document.getElementById('login-pass').value;
+  const errDiv = document.getElementById('login-error');
+  errDiv.textContent = '';
+  if (!email || !pass) { errDiv.textContent = 'Introduce email y contraseña'; return; }
+  try {
+    const r = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(email)}&password=${encodeURIComponent(pass)}`
+    });
+    const d = await r.json();
+    if (!r.ok) { errDiv.textContent = d.detail || 'Credenciales incorrectas'; return; }
+    authToken   = d.access_token;
+    currentUser = { email, nombre: d.nombre, rol: d.rol };
+    sessionStorage.setItem('cl_token', authToken);
+    sessionStorage.setItem('cl_user', JSON.stringify(currentUser));
+    mostrarApp();
+  } catch(e) {
+    errDiv.textContent = 'Error de conexión';
+  }
+}
+
+function mostrarApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display   = 'block';
+  const userEl = document.getElementById('topbar-user');
+  if (userEl && currentUser) userEl.textContent = currentUser.nombre + ' · ' + currentUser.rol;
+  cargarDashboard();
+}
+
+function doLogout() {
+  authToken = null; currentUser = null;
+  sessionStorage.removeItem('cl_token');
+  sessionStorage.removeItem('cl_user');
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app-screen').style.display   = 'none';
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-pass').value  = '';
+}
+
+if (authToken) { mostrarApp(); }
+else { document.getElementById('login-screen').style.display = 'flex'; }
 </script>
 </body>
 </html>
