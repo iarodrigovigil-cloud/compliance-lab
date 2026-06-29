@@ -1277,7 +1277,7 @@ async function cargarAudit(id) {
 
 
 // ── AUTH ──────────────────────────────────────────────────
-const API = '';
+
 let authToken = sessionStorage.getItem('cl_token') || null;
 let currentUser = JSON.parse(sessionStorage.getItem('cl_user') || 'null');
 
