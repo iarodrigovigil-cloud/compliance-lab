@@ -107,7 +107,7 @@ async def listar_expedientes(estado: Optional[str] = None, limite: int = 50, db=
                e.fecha_creacion, COUNT(d.id) as num_documentos
         FROM expedientes e
         LEFT JOIN documentos d ON d.expediente_id = e.id
-        WHERE ($1::text IS NULL OR e.estado = $1::estadoexpediente)
+        WHERE ($1::text IS NULL OR e.estado::text = $1::text)
         GROUP BY e.id, e.codigo, e.denominacion, e.nif, e.estado,
                  e.nivel_riesgo, e.score_ebr, e.aml_officer_nombre, e.fecha_creacion
         ORDER BY e.fecha_creacion DESC LIMIT $2
@@ -751,7 +751,7 @@ async def tomar_decision_aml(expediente_id: str, data: DecisionRequest, db=Depen
         if not exp:
             raise HTTPException(status_code=404, detail="Expediente no encontrado")
         await conn.execute(
-            "UPDATE expedientes SET estado=$1::estadoexpediente, fecha_actualizacion=NOW() WHERE id=$2::uuid",
+            "UPDATE expedientes SET estado=$1, fecha_actualizacion=NOW() WHERE id=$2::uuid",
             nuevo_estado, expediente_id
         )
         await conn.execute(
