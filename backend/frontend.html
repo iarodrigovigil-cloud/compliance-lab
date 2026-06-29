@@ -1071,5 +1071,27 @@ async function desactivarUsuario(id) {
 
 </script>
 </div>
+
+<div id="modal-usuario" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:2rem;width:500px;max-width:95vw">
+    <h3 style="margin-bottom:1.5rem;font-size:16px" id="modal-usuario-titulo">Nuevo usuario</h3>
+    <div style="display:grid;gap:1rem">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div><label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Nombre *</label><input id="u-nombre" type="text" placeholder="Nombre" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></div>
+        <div><label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Apellidos</label><input id="u-apellidos" type="text" placeholder="Apellidos" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></div>
+      </div>
+      <div><label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Email *</label><input id="u-email" type="email" placeholder="usuario@empresa.es" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></div>
+      <div><label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Cargo</label><input id="u-cargo" type="text" placeholder="Compliance Officer" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div><label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Rol *</label><select id="u-rol" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"><option value="admin">Admin</option><option value="aml_officer" selected>AML Officer</option><option value="viewer">Viewer</option></select></div>
+        <div><label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Contraseña *</label><input id="u-password" type="password" placeholder="••••••••" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:1rem;justify-content:flex-end;margin-top:1.5rem">
+      <button onclick="cerrarModalUsuario()" style="padding:8px 20px;border:1px solid #ddd;border-radius:6px;cursor:pointer;background:#fff">Cancelar</button>
+      <button onclick="guardarUsuario()" style="padding:8px 20px;background:#003C96;color:#fff;border:none;border-radius:6px;cursor:pointer">Guardar</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

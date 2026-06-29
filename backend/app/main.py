@@ -624,7 +624,7 @@ class UsuarioUpdate(PydanticBase):
 @app.get("/api/usuarios", tags=["Gestión de Usuarios"])
 async def listar_usuarios(db=Depends(get_db)):
     import asyncpg as _asyncpg
-    _conn = await _asyncpg.connect(os.getenv("DATABASE_URL", "postgresql://compliancelab:cl_app_2026@localhost:5432/compliancelab_db"))
+    _conn = await _asyncpg.connect(os.getenv("DATABASE_URL_ADMIN", "postgresql://compliancelab:cl_app_2026@localhost:5432/compliancelab_db"))
     try:
         rows = await _conn.fetch("SELECT id, email, nombre, apellidos, cargo, rol, activo, fecha_creacion, ultimo_acceso FROM usuarios ORDER BY fecha_creacion DESC")
     finally:
@@ -635,15 +635,15 @@ async def listar_usuarios(db=Depends(get_db)):
 async def crear_usuario(data: UsuarioCreate, db=Depends(get_db)):
     from app.auth import hash_password
     pwd_hash = hash_password(data.password)
-    async with db.acquire() as conn:
-        existing = await conn.fetchrow("SELECT id FROM usuarios WHERE email=$1", data.email)
+    import asyncpg as _pg2
+    _c2 = await _pg2.connect(os.getenv("DATABASE_URL_ADMIN", "postgresql://compliancelab:cl_app_2026@localhost:5432/compliancelab_db"))
+    try:
+        existing = await _c2.fetchrow("SELECT id FROM usuarios WHERE email=$1", data.email)
         if existing:
             raise HTTPException(status_code=400, detail="Email ya registrado")
-        row = await conn.fetchrow("""
-            INSERT INTO usuarios (email, nombre, apellidos, cargo, rol, password_hash, activo)
-            VALUES ($1, $2, $3, $4, $5::rolusuario, $6, true)
-            RETURNING id, email, nombre, rol, activo, fecha_creacion
-        """, data.email, data.nombre, data.apellidos, data.cargo, data.rol, pwd_hash)
+        row = await _c2.fetchrow("INSERT INTO usuarios (email, nombre, apellidos, cargo, rol, password_hash, activo) VALUES ($1, $2, $3, $4, $5::rolusuario, $6, true) RETURNING id, email, nombre, rol, activo, fecha_creacion", data.email, data.nombre, data.apellidos, data.cargo, data.rol, pwd_hash)
+    finally:
+        await _c2.close()
     return dict(row)
 
 @app.put("/api/usuarios/{usuario_id}", tags=["Gestión de Usuarios"])
