@@ -668,6 +668,11 @@ async function cargarPanelAML(id) {
           <div class="d-title">Escalar a Dirección</div>
           <div class="d-desc">Compliance · Nivel 3 · Notificación automática</div>
         </div>
+        <div class="decision-btn d-rechazar" onclick="tomarDecision('${id}','rechazar')" style="background:#fff5f5;border-color:#fca5a5">
+          <div class="d-icon">❌</div>
+          <div class="d-title" style="color:#dc2626">Rechazar expediente</div>
+          <div class="d-desc">Denegar operación · Registrar motivo</div>
+        </div>
         <div class="decision-btn d-rescreening" onclick="calcularScoring('${id}')">
           <div class="d-icon">🔄</div>
           <div class="d-title">Recalcular EBR</div>
@@ -765,35 +770,31 @@ async function generarSAR(id) {
 }
 
 async function tomarDecision(id, tipo) {
-  const mensajes = {
-    aprobar: '✅ Expediente aprobado con Diligencia Debida Reforzada.\
-\
-El evento quedará sellado en el audit trail blockchain.\
-\
-¿Confirmar?',
-    escalar: '⬆️ Expediente escalado a Dirección de Compliance.\
-\
-Se generará notificación automática.\
-\
-¿Confirmar?'
+  const labels = {
+    aprobar: 'Aprobar con Diligencia Debida Reforzada',
+    rechazar: 'Rechazar expediente',
+    escalar: 'Escalar a Dirección de Compliance'
   };
-  if (!confirm(mensajes[tipo])) return;
-
+  let motivo = labels[tipo];
+  if (tipo === 'rechazar') {
+    motivo = prompt('Motivo del rechazo (obligatorio):');
+    if (!motivo) return;
+  }
+  if (!confirm('¿Confirmar: ' + labels[tipo] + '?')) return;
   try {
-    await fetch(`${API}/expedientes/${id}`, { method: 'GET' });
-    alert(tipo === 'aprobar' ?
-      '✅ Expediente aprobado con DDR.\
-Hash sellado en blockchain.\
-Audit trail actualizado.' :
-      '⬆️ Escalado a Dirección de Compliance.\
-Notificación enviada.'
-    );
+    const r = await fetch(API + '/expedientes/' + id + '/decision', {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ decision: tipo, motivo: motivo })
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || 'Error');
+    const res = await r.json();
+    alert(res.mensaje || 'Decisión registrada: ' + labels[tipo]);
     cargarPanelAML(id);
   } catch(e) {
     alert('Error: ' + e.message);
   }
 }
-
 // ── Subir documento
 function cargarSelectExpedientes() {
   fetch(API + '/expedientes').then(r => r.json()).then(exps => {

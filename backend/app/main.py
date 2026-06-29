@@ -673,3 +673,55 @@ async def desactivar_usuario(usuario_id: str, db=Depends(get_db)):
     async with db.acquire() as conn:
         await conn.execute("UPDATE usuarios SET activo=false WHERE id=$1::uuid", usuario_id)
     return {"ok": True, "mensaje": "Usuario desactivado"}
+
+
+# ── DECISIÓN AML OFFICER ──────────────────────────────────
+class DecisionRequest(BaseModel):
+    decision: str  # aprobar | rechazar | escalar
+    motivo: Optional[str] = None
+
+@app.post("/expedientes/{expediente_id}/decision", tags=["Panel AML"])
+async def tomar_decision_aml(expediente_id: str, data: DecisionRequest, db=Depends(get_db)):
+    import uuid as _uuid
+    estados = {
+        "aprobar": "aprobado",
+        "rechazar": "rechazado",
+        "escalar": "en_proceso"
+    }
+    if data.decision not in estados:
+        raise HTTPException(status_code=400, detail="Decisión inválida. Use: aprobar, rechazar, escalar")
+
+    nuevo_estado = estados[data.decision]
+    mensajes = {
+        "aprobar": "✅ Expediente aprobado con Diligencia Debida Reforzada · Registrado en audit trail",
+        "rechazar": "❌ Expediente rechazado · Operación denegada · Registrado en audit trail",
+        "escalar": "⬆️ Expediente escalado a Dirección de Compliance · Notificación registrada"
+    }
+
+    async with db.acquire() as conn:
+        exp = await conn.fetchrow(
+            "SELECT id, denominacion FROM expedientes WHERE id=$1::uuid",
+            expediente_id
+        )
+        if not exp:
+            raise HTTPException(status_code=404, detail="Expediente no encontrado")
+        await conn.execute(
+            "UPDATE expedientes SET estado=$1::estadoexpediente, fecha_actualizacion=NOW() WHERE id=$2::uuid",
+            nuevo_estado, expediente_id
+        )
+        await conn.execute(
+            """INSERT INTO audit_trail
+               (expediente_id, tipo_evento, descripcion, actor, hash_evento)
+               VALUES ($1::uuid, $2, $3, 'aml-officer', $4)""",
+            expediente_id,
+            "decision_aml_officer",
+            f"Decisión AML: {data.decision.upper()} · {data.motivo or mensajes[data.decision]}",
+            str(_uuid.uuid4()).replace("-", "")[:64]
+        )
+    return {
+        "ok": True,
+        "expediente_id": expediente_id,
+        "decision": data.decision,
+        "nuevo_estado": nuevo_estado,
+        "mensaje": mensajes[data.decision]
+    }
