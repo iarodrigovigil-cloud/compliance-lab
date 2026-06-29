@@ -274,26 +274,24 @@ async def ver_campos(expediente_id: str, db=Depends(get_db)):
 @app.post("/expedientes/{expediente_id}/scoring", tags=["Scoring EBR · AML"])
 async def calcular_scoring(expediente_id: str, db=Depends(get_db)):
     """
-    ⭐ NUEVO EN PASO 7 ⭐
-
-    Calcula el scoring AML/EBR completo del expediente:
-    - 5 dimensiones de riesgo
+    Calcula el scoring AML/EBR v2.0 completo del expediente:
+    - Consulta OpenMercantil (BORME) si hay NIF disponible
+    - 5 dimensiones de riesgo con BORME al 25%
     - Score inherente y residual
     - Nivel de riesgo (bajo/medio/alto/muy_alto)
-    - Alerta SAR si score ≥ 70 (Art. 18 Ley 10/2010)
-    - Guarda resultado en base de datos
-    - Registra en audit trail blockchain
+    - Alerta SAR si score >= 70 (Art. 18 Ley 10/2010)
+    - Guarda resultado completo incluyendo datos BORME en base de datos
     """
+    import json as _json
     from app.services.ebr_engine import calcular_ebr
+    from app.services.mercantil_engine import consultar_borme as buscar_empresa_borme
 
-    # Obtener expediente
+    # 1 — Obtener expediente y campos
     async with db.acquire() as conn:
         expediente = await conn.fetchrow(
             "SELECT * FROM expedientes WHERE id = $1::uuid", expediente_id)
         if not expediente:
             raise HTTPException(404, f"Expediente {expediente_id} no encontrado")
-
-        # Obtener campos extraídos
         campos = await conn.fetch(
             """SELECT nombre_campo, valor, confianza
                FROM campos_extraidos WHERE expediente_id = $1::uuid""",
@@ -303,20 +301,34 @@ async def calcular_scoring(expediente_id: str, db=Depends(get_db)):
         raise HTTPException(400, "No hay campos extraídos. Sube y procesa documentos primero.")
 
     campos_lista = [dict(c) for c in campos]
+    nif = expediente['nif']
 
-    # Calcular EBR
+    # 2 — Consultar BORME via OpenMercantil (si hay NIF)
+    datos_borme = None
+    senales_borme = []
+    if nif:
+        try:
+            datos_borme = await buscar_empresa_borme(nif)
+            if datos_borme and datos_borme.get("encontrado"):
+                senales_borme = datos_borme.get("senales_riesgo", [])
+        except Exception as e:
+            print(f"⚠️ OpenMercantil no disponible: {e}")
+            datos_borme = None
+
+    # 3 — Calcular EBR v2.0
     resultado = calcular_ebr(
         expediente_id=expediente_id,
         campos=campos_lista,
         denominacion=expediente['denominacion'],
-        nif=expediente['nif']
+        nif=nif,
+        datos_borme=datos_borme
     )
+    r    = resultado['resultado']
+    dims = resultado['dimensiones']
 
-    r = resultado['resultado']
-
-    # Guardar en base de datos
+    # 4 — Guardar en base de datos
     async with db.acquire() as conn:
-        # Upsert en scoring_aml
+        # INSERT inicial (compatibilidad con registros anteriores)
         await conn.execute(
             """INSERT INTO scoring_aml
                (expediente_id, riesgo_cliente, riesgo_geografico, riesgo_producto,
@@ -325,25 +337,56 @@ async def calcular_scoring(expediente_id: str, db=Depends(get_db)):
                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                ON CONFLICT DO NOTHING""",
             expediente_id,
-            resultado['dimensiones']['factor_cliente']['score'],
-            resultado['dimensiones']['factor_geografico']['score'],
-            resultado['dimensiones']['producto_canal']['score'],
-            resultado['dimensiones']['adverse_media']['score'],
+            dims['factor_cliente']['score'],
+            dims['factor_geografico']['score'],
+            dims['producto_canal']['score'],
+            dims['adverse_media']['score'],
             r['score_inherente'],
             r['controles_aplicados'],
             r['score_residual'],
             r['nivel_riesgo'],
             r['umbral_sar']
         )
-
-        # Actualizar expediente con el score
+        # UPDATE completo EBR v2.0 con BORME
+        await conn.execute(
+            """UPDATE scoring_aml SET
+               riesgo_cliente       = $2,
+               riesgo_geografico    = $3,
+               riesgo_producto      = $4,
+               riesgo_canal         = $5,
+               riesgo_adverse_media = $6,
+               score_inherente      = $7,
+               controles_aplicados  = $8,
+               score_residual       = $9,
+               nivel_riesgo         = $10,
+               umbral_sar           = $11,
+               datos_borme          = $12,
+               senales_borme        = $13,
+               borme_consultado_en  = NOW(),
+               fecha_actualizacion  = NOW()
+               WHERE expediente_id  = $1::uuid""",
+            expediente_id,
+            dims['factor_cliente']['score'],
+            dims['factor_geografico']['score'],
+            dims['producto_canal']['score'],
+            dims['adverse_media']['score'],
+            dims['adverse_media']['score'],
+            r['score_inherente'],
+            r['controles_aplicados'],
+            r['score_residual'],
+            r['nivel_riesgo'],
+            r['umbral_sar'],
+            _json.dumps(datos_borme) if datos_borme else None,
+            senales_borme if senales_borme else None
+        )
+        # Actualizar expediente
         await conn.execute(
             """UPDATE expedientes SET
                score_ebr=$1, nivel_riesgo=$2, fecha_actualizacion=NOW()
                WHERE id=$3::uuid""",
             r['score_residual'], r['nivel_riesgo'], expediente_id)
-
         # Audit trail
+        metodo = "EBR-v2-BORME" if datos_borme and datos_borme.get("encontrado") else "EBR-v1-BASE"
         await conn.execute(
             """INSERT INTO audit_trail
                (expediente_id, tipo_evento, descripcion, actor, hash_evento, numero_bloque)
@@ -351,13 +394,15 @@ async def calcular_scoring(expediente_id: str, db=Depends(get_db)):
                        (SELECT COALESCE(MAX(numero_bloque),0)+1
                         FROM audit_trail WHERE expediente_id=$1::uuid))""",
             expediente_id,
-            f"EBR: score {r['score_residual']}/100 · nivel {r['nivel_riesgo']} · SAR: {r['umbral_sar']}",
+            f"EBR: score {r['score_residual']}/100 · nivel {r['nivel_riesgo']} · SAR: {r['umbral_sar']} · método: {metodo}",
             str(uuid.uuid4()).replace('-', '')[:64]
         )
 
     return {
-        "mensaje": "✅ Scoring EBR calculado",
+        "mensaje": "✅ Scoring EBR v2.0 calculado",
         "expediente": expediente['denominacion'],
+        "borme_consultado": datos_borme is not None,
+        "borme_encontrado": datos_borme.get("encontrado", False) if datos_borme else False,
         "scoring": resultado
     }
 
