@@ -1528,3 +1528,24 @@ async def exportar_pdf(expediente_id: str, db=Depends(get_db)):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
     )
+
+
+# ── BORME / OpenMercantil ─────────────────────────────────
+from app.services.mercantil_engine import consultar_borme
+
+@app.get("/api/mercantil/{nif}", tags=["BORME · Registro Mercantil"])
+async def consultar_mercantil_endpoint(nif: str):
+    """Consulta datos BORME de una empresa por NIF via OpenMercantil."""
+    resultado = await consultar_borme(nif)
+    return resultado
+
+@app.get("/api/mercantil/{nif}/riesgo", tags=["BORME · Registro Mercantil"])
+async def consultar_mercantil_riesgo(nif: str, expediente_id: str = None):
+    """Consulta BORME e integra señales de riesgo en el scoring EBR."""
+    datos_borme = await consultar_borme(nif)
+    return {
+        "nif": nif,
+        "datos_borme": datos_borme,
+        "senales_riesgo": datos_borme.get("senales_riesgo", []),
+        "encontrado": datos_borme.get("encontrado", False)
+    }
