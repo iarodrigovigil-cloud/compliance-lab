@@ -51,7 +51,7 @@ def extraer_texto_ocr(ruta_pdf: str, max_paginas: int = 50) -> str:
     """
     texto = ""
     try:
-        imagenes = convert_from_path(ruta_pdf, dpi=300, fmt="png")
+        imagenes = convert_from_path(ruta_pdf, dpi=200, fmt="png")
     except Exception as e:
         raise Exception(f"Error convirtiendo PDF a imagen para OCR: {e}")
 
