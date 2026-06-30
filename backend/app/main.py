@@ -770,3 +770,47 @@ async def tomar_decision_aml(expediente_id: str, data: DecisionRequest, db=Depen
         "nuevo_estado": nuevo_estado,
         "mensaje": mensajes[data.decision]
     }
+
+
+@app.get("/debug/tesseract", tags=["Debug"])
+async def debug_tesseract():
+    """Endpoint temporal de diagnóstico: verifica si tesseract está disponible en runtime real."""
+    import subprocess
+    import shutil
+    resultado = {}
+
+    # 1 - Buscar el binario con shutil.which (lo que usa pytesseract internamente)
+    resultado["shutil_which_tesseract"] = shutil.which("tesseract")
+
+    # 2 - Intentar ejecutar tesseract --version directamente
+    try:
+        p = subprocess.run(["tesseract", "--version"], capture_output=True, text=True, timeout=5)
+        resultado["tesseract_version_stdout"] = p.stdout[:300]
+        resultado["tesseract_version_stderr"] = p.stderr[:300]
+        resultado["tesseract_returncode"] = p.returncode
+    except FileNotFoundError as e:
+        resultado["tesseract_exec_error"] = f"FileNotFoundError: {str(e)}"
+    except Exception as e:
+        resultado["tesseract_exec_error"] = f"{type(e).__name__}: {str(e)}"
+
+    # 3 - Probar pytesseract directamente (la librería que usa LegNER)
+    try:
+        import pytesseract
+        resultado["pytesseract_tesseract_cmd"] = pytesseract.pytesseract.tesseract_cmd
+        try:
+            v = pytesseract.get_tesseract_version()
+            resultado["pytesseract_version"] = str(v)
+        except Exception as e:
+            resultado["pytesseract_version_error"] = f"{type(e).__name__}: {str(e)}"
+    except Exception as e:
+        resultado["pytesseract_import_error"] = str(e)
+
+    # 4 - Buscar el binario en rutas comunes
+    import os
+    rutas_comunes = ["/usr/bin/tesseract", "/usr/local/bin/tesseract", "/app/.venv/bin/tesseract"]
+    resultado["rutas_existen"] = {r: os.path.exists(r) for r in rutas_comunes}
+
+    # 5 - PATH actual del proceso
+    resultado["PATH"] = os.environ.get("PATH", "no definido")
+
+    return resultado
