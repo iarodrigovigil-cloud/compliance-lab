@@ -343,6 +343,43 @@ Esta función requiere certificado digital del sujeto obligado.')">📤 Enviar a
 const API = window.location.origin
 let archivoSeleccionado = null;
 let expedientes = [];
+let expedienteActual = null;
+
+// ── Modal visor de documento ──────────────────────────────
+function abrirVisor(expedienteId, nombreCampo) {
+  const url = `${API}/expedientes/${expedienteId}/campos/${encodeURIComponent(nombreCampo)}/visor`;
+  const modal = document.getElementById('visor-modal');
+  const iframe = document.getElementById('visor-iframe');
+  const titulo = document.getElementById('visor-titulo');
+  titulo.textContent = 'Documento fuente · ' + nombreCampo.replace(/_/g,' ');
+  iframe.src = url;
+  modal.style.display = 'flex';
+}
+function cerrarVisor() {
+  document.getElementById('visor-modal').style.display = 'none';
+  document.getElementById('visor-iframe').src = '';
+}
+
+// ── Guardar corrección manual de campo ───────────────────
+async function guardarCorreccion(nombreCampo, editId, valId) {
+  const nuevoValor = document.getElementById('inp_' + editId).value.trim();
+  const motivo = document.getElementById('mot_' + editId).value.trim() || 'Corrección manual AML Officer';
+  if (!nuevoValor) return;
+  if (!expedienteActual) { alert('No hay expediente cargado'); return; }
+  try {
+    const r = await fetch(`${API}/expedientes/${expedienteActual}/campos/${encodeURIComponent(nombreCampo)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ valor: nuevoValor, motivo })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const vEl = document.getElementById(valId);
+    vEl.textContent = nuevoValor;
+    vEl.style.color = '#0F6E56';
+    setTimeout(() => vEl.style.color = '', 2500);
+    document.getElementById(editId).style.display = 'none';
+  } catch(e) { alert('Error al guardar: ' + e.message); }
+}
 
 function showPage(name, el) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -458,6 +495,7 @@ async function cargarSelectAML() {
 
 async function cargarPanelAML(id) {
   if (!id) return;
+  expedienteActual = id;
   document.getElementById('panel-aml-contenido').innerHTML =
     '<div class="loading"><div class="spinner"></div> Cargando panel AML completo...</div>';
   try {
@@ -608,10 +646,33 @@ async function cargarPanelAML(id) {
 
       const renderCampo = (c) => {
         const histId = 'hist_' + c.nombre_campo.replace(/[^a-zA-Z0-9]/g,'_');
+        const editId = 'edit_' + c.nombre_campo.replace(/[^a-zA-Z0-9]/g,'_');
+        const valId  = 'val_'  + c.nombre_campo.replace(/[^a-zA-Z0-9]/g,'_');
+        const confianzaBaja = c.confianza_vigente != null && c.confianza_vigente < 80;
         let html = `<div class="campo-card" style="position:relative">
-          <div class="campo-nombre">${c.nombre_campo.replace(/_/g,' ')}</div>
-          <div class="campo-valor">${c.valor_vigente}</div>
-          <div class="campo-conf" style="color:${cc(c.confianza_vigente)}">${c.confianza_vigente!=null?c.confianza_vigente+'%':''} ${c.fecha_vigente?'· '+c.fecha_vigente:''}</div>`;
+          <div class="campo-nombre" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+            <span>${c.nombre_campo.replace(/_/g,' ')}</span>
+            ${confianzaBaja ? '<span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px">⚠ baja confianza</span>' : ''}
+            <span title="Corregir valor" style="cursor:pointer;font-size:12px;opacity:0.5;margin-left:auto"
+              onclick="document.getElementById('${editId}').style.display=document.getElementById('${editId}').style.display==='none'?'block':'none'">✏️</span>
+          </div>
+          <div class="campo-valor" id="${valId}">${c.valor_vigente}</div>
+          <div class="campo-conf" style="color:${cc(c.confianza_vigente)}">${c.confianza_vigente!=null?c.confianza_vigente+'%':''} ${c.fecha_vigente?'· '+c.fecha_vigente:''}</div>
+          <div id="${editId}" style="display:none;margin-top:8px;padding:10px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0">
+            <div style="font-size:10px;font-weight:600;color:#374151;margin-bottom:6px">✏️ Corregir campo</div>
+            <input id="inp_${editId}" type="text" value="${(c.valor_vigente||'').replace(/"/g,'&quot;')}"
+              style="width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;box-sizing:border-box;margin-bottom:6px">
+            <input id="mot_${editId}" type="text" placeholder="Motivo (ej: verificado en nota de inscripción)"
+              style="width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;box-sizing:border-box;margin-bottom:8px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button onclick="guardarCorreccion('${c.nombre_campo}','${editId}','${valId}')"
+                style="background:#003C96;color:#fff;border:none;padding:5px 14px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">💾 Guardar</button>
+              <button onclick="abrirVisor(expedienteActual,'${c.nombre_campo}')"
+                style="background:#0F6E56;color:#fff;border:none;padding:5px 14px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">📄 Ver documento</button>
+              <button onclick="document.getElementById('${editId}').style.display='none'"
+                style="background:#f1f5f9;color:#64748b;border:none;padding:5px 10px;border-radius:4px;font-size:11px;cursor:pointer">Cancelar</button>
+            </div>
+          </div>`;
         if (c.tiene_historial) {
           html += `<span style="font-size:10px;color:#003C96;cursor:pointer;font-weight:700;display:inline-block;margin-top:4px" onclick="const e=document.getElementById('${histId}');e.style.display=e.style.display==='none'?'block':'none'">📜 Ver evolución (${c.historial.length})</span>
           <div id="${histId}" style="display:none;margin-top:6px;border-top:1px dashed #d1d5db;padding-top:6px">
@@ -972,5 +1033,26 @@ function doLogout() {
 if (authToken) { mostrarApp(); }
 else { document.getElementById('login-screen').style.display = 'flex'; }
 </script>
+
+<!-- ── Modal visor de documento con resaltado ── -->
+<div id="visor-modal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
+     background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;width:90vw;height:88vh;display:flex;
+              flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                padding:14px 20px;border-bottom:1px solid #e5e7eb;flex-shrink:0">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:#1a1a2e" id="visor-titulo">Documento fuente</div>
+        <div style="font-size:11px;color:#6b7280;margin-top:2px">
+          🟡 Valor actual del campo &nbsp;|&nbsp; 🔵 Términos relacionados
+        </div>
+      </div>
+      <button onclick="cerrarVisor()"
+        style="background:#f1f5f9;border:none;border-radius:6px;padding:6px 14px;
+               font-size:13px;cursor:pointer;color:#64748b;font-weight:600">✕ Cerrar</button>
+    </div>
+    <iframe id="visor-iframe" src="" style="flex:1;border:none;border-radius:0 0 12px 12px"></iframe>
+  </div>
+</div>
 </body>
 </html>
