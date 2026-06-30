@@ -212,13 +212,18 @@ Del siguiente documento de tipo "{TIPOS_DOCUMENTO.get(tipo_documento, tipo_docum
 TEXTO DEL DOCUMENTO:
 {texto[:25000]}
 
-Reglas:
+Reglas generales:
 - Si un campo no aparece en el documento, usa null
 - Las fechas en formato DD/MM/YYYY
 - El NIF/CIF sin guiones (ej: B12345678)
 - Para campos de administradores (pueden ser varios), devuelve una lista
 - Los importes en € usa solo el número con punto decimal (ej: 201506.00). Si el importe aparece escrito en palabras (ej: "DOSCIENTOS UN MIL QUINIENTOS SEIS EUROS") conviértelo igualmente a número (201506.00)
-- Para "capital_social" busca frases como "El capital social se fija en", "capital social... EUROS", "QUEDA AUMENTADO el capital social", o el artículo de estatutos que define la cifra de capital
+
+Reglas CRÍTICAS para escrituras de ampliación de capital:
+- "capital_social" es el capital RESULTANTE FINAL tras la ampliación, NO el anterior ni el importe ampliado. Búscalo en frases como "El capital social se fija en XXXX EUROS (XXX,00 €)" dentro del artículo de estatutos (suele aparecer como "Artículo 6º. Cifra capital"), o en "QUEDA AUMENTADO el capital social en la suma de... siendo el capital resultante de...". NO uses el capital anterior ni el importe de la ampliación como capital_social
+- "capital_social_anterior" es el capital que tenía la sociedad ANTES de esta ampliación
+- "importe_ampliacion" es solo la cantidad que se AÑADE en esta operación
+- La fórmula es: capital_social = capital_social_anterior + importe_ampliacion
 - "fecha_diligencia_subsanacion" solo aparece si el documento incluye una diligencia notarial posterior que corrige errores; si no existe, usa null
 - "fecha_inscripcion_registro" busca frases como "ha sido inscrita con fecha", "inscripción 5ª" con su fecha asociada
 
@@ -230,8 +235,11 @@ Responde SOLO con este JSON, sin texto adicional:
     ]
 }}"""
 
+    # Usar Sonnet para escrituras de ampliación de capital (documento complejo con cifras críticas)
+    modelo = "claude-sonnet-4-6" if tipo_documento == "escritura_ampliacion_capital" else "claude-haiku-4-5-20251001"
+
     respuesta = cliente.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model=modelo,
         max_tokens=3000,
         messages=[{"role": "user", "content": prompt}]
     )
