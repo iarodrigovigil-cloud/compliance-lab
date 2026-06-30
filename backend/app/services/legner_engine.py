@@ -210,15 +210,17 @@ Del siguiente documento de tipo "{TIPOS_DOCUMENTO.get(tipo_documento, tipo_docum
 {json.dumps(campos, ensure_ascii=False, indent=2)}
 
 TEXTO DEL DOCUMENTO:
-{texto[:12000]}
+{texto[:25000]}
 
 Reglas:
 - Si un campo no aparece en el documento, usa null
 - Las fechas en formato DD/MM/YYYY
 - El NIF/CIF sin guiones (ej: B12345678)
 - Para campos de administradores (pueden ser varios), devuelve una lista
-- Los importes en € usa solo el número (sin símbolo de moneda), con punto como separador decimal (ej: 201506.00)
-- "fecha_diligencia_subsanacion" solo aparece si el documento incluye una diligencia notarial posterior que corrige errores de la escritura original; si no existe diligencia, usa null
+- Los importes en € usa solo el número con punto decimal (ej: 201506.00). Si el importe aparece escrito en palabras (ej: "DOSCIENTOS UN MIL QUINIENTOS SEIS EUROS") conviértelo igualmente a número (201506.00)
+- Para "capital_social" busca frases como "El capital social se fija en", "capital social... EUROS", "QUEDA AUMENTADO el capital social", o el artículo de estatutos que define la cifra de capital
+- "fecha_diligencia_subsanacion" solo aparece si el documento incluye una diligencia notarial posterior que corrige errores; si no existe, usa null
+- "fecha_inscripcion_registro" busca frases como "ha sido inscrita con fecha", "inscripción 5ª" con su fecha asociada
 
 Responde SOLO con este JSON, sin texto adicional:
 {{
