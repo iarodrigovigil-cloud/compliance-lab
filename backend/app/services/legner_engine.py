@@ -20,58 +20,29 @@ import json
 import os
 from pathlib import Path
 
-# ── OCR fallback para PDFs escaneados
-from pdf2image import convert_from_path
-import pytesseract
-
 # ── Leer la API Key del archivo .env
 from dotenv import load_dotenv
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-# ── Los 9 tipos de documento KYC que reconoce LegNER
+# ── Los 8 tipos de documento KYC que reconoce LegNER
 TIPOS_DOCUMENTO = {
-    "nota_simple":               "Nota Simple Registral",
-    "certificado_vigencia":      "Certificado de Vigencia y Cargo",
-    "escritura_constitucion":    "Escritura de Constitución",
-    "escritura_ampliacion_capital": "Escritura de Ampliación de Capital",
-    "acta_titularidad":          "Acta de Titularidad Real",
-    "declaracion_titularidad":   "Declaración de Titularidad Real",
-    "documento_identidad":       "Documento de Identidad (DNI/Pasaporte)",
-    "certificado_fiscal":        "Certificado Fiscal (ATR)",
-    "extranjero":                "Documento Extranjero · Verificación Manual",
+    "nota_simple":             "Nota Simple Registral",
+    "certificado_vigencia":    "Certificado de Vigencia y Cargo",
+    "escritura_constitucion":  "Escritura de Constitución",
+    "acta_titularidad":        "Acta de Titularidad Real",
+    "declaracion_titularidad": "Declaración de Titularidad Real",
+    "documento_identidad":     "Documento de Identidad (DNI/Pasaporte)",
+    "certificado_fiscal":      "Certificado Fiscal (ATR)",
+    "extranjero":              "Documento Extranjero · Verificación Manual",
 }
-
-
-def extraer_texto_ocr(ruta_pdf: str, max_paginas: int = 20) -> str:
-    """
-    Fallback OCR: convierte el PDF a imágenes y extrae texto con Tesseract.
-    Se usa cuando pdfplumber no encuentra texto seleccionable (PDF escaneado).
-    """
-    texto = ""
-    try:
-        imagenes = convert_from_path(ruta_pdf, dpi=300, fmt="png")
-    except Exception as e:
-        raise Exception(f"Error convirtiendo PDF a imagen para OCR: {e}")
-
-    for i, imagen in enumerate(imagenes[:max_paginas]):
-        try:
-            texto_pagina = pytesseract.image_to_string(imagen, lang="spa+eng")
-            if texto_pagina:
-                texto += texto_pagina + "\n"
-        except Exception as e:
-            print(f"   ⚠️ OCR falló en página {i+1}: {e}")
-            continue
-
-    return texto.strip()
 
 
 def extraer_texto_pdf(ruta_pdf: str) -> str:
     """
     Paso 1: Lee el PDF y extrae todo el texto.
-    Primero intenta pdfplumber (PDFs nativos con texto seleccionable).
-    Si no encuentra texto (PDF escaneado como imagen), recurre a OCR con Tesseract.
+    pdfplumber es mejor que PyPDF2 para documentos legales españoles.
     """
     texto = ""
     try:
@@ -83,18 +54,8 @@ def extraer_texto_pdf(ruta_pdf: str) -> str:
     except Exception as e:
         raise Exception(f"Error leyendo PDF: {e}")
 
-    texto = texto.strip()
-
-    # Fallback OCR si pdfplumber no extrajo texto suficiente (PDF escaneado)
-    if len(texto) < 50:
-        print("   ℹ️  PDF sin texto nativo detectado · activando OCR con Tesseract...")
-        texto = extraer_texto_ocr(ruta_pdf)
-
-    if not texto or len(texto.strip()) < 20:
-        raise Exception(
-            "No se pudo extraer texto del PDF, ni de forma nativa ni mediante OCR. "
-            "El documento puede tener muy baja calidad de escaneo."
-        )
+    if not texto.strip():
+        raise Exception("El PDF no tiene texto extraíble (puede ser una imagen escaneada)")
 
     return texto.strip()
 
@@ -108,19 +69,16 @@ def clasificar_documento(texto: str) -> dict:
 
     prompt = f"""Eres LegNER, un clasificador experto de documentos KYC del sistema legal español.
 
-Analiza el siguiente texto de un documento y clasifícalo en UNO de estos 9 tipos:
+Analiza el siguiente texto de un documento y clasifícalo en UNO de estos 8 tipos:
 
 1. nota_simple - Nota Simple Registral del Registro Mercantil
 2. certificado_vigencia - Certificado de Vigencia y Cargo de administradores
-3. escritura_constitucion - Escritura de CONSTITUCIÓN de una sociedad nueva (creación inicial de la empresa, primer capital social)
-4. escritura_ampliacion_capital - Escritura de AUMENTO/AMPLIACIÓN de capital social de una sociedad YA EXISTENTE (incluye ampliaciones por compensación de créditos, aportación dineraria o no dineraria, y sus diligencias de subsanación). Identifícala por títulos como "ESCRITURA DE ELEVACIÓN A PÚBLICO DE ACUERDOS... AUMENTO DE CAPITAL", "AMPLIACIÓN DE CAPITAL", o porque el texto menciona una sociedad ya constituida con anterioridad cuyo capital se incrementa
-5. acta_titularidad - Acta de Manifestaciones de Titularidad Real
-6. declaracion_titularidad - Declaración de Titularidad Real
-7. documento_identidad - DNI, NIE o Pasaporte
-8. certificado_fiscal - Certificado de situación fiscal (ATR)
-9. extranjero - Documento de registro extranjero (requiere verificación manual)
-
-IMPORTANTE: no confundas el tipo 3 (constitución) con el tipo 4 (ampliación). Si el documento dice que la sociedad "constituida... en escritura autorizada... el día [fecha anterior]" y ahora se reúne para "AUMENTAR" o "AMPLIAR" su capital, es tipo 4, no tipo 3.
+3. escritura_constitucion - Escritura de Constitución de sociedad
+4. acta_titularidad - Acta de Manifestaciones de Titularidad Real
+5. declaracion_titularidad - Declaración de Titularidad Real
+6. documento_identidad - DNI, NIE o Pasaporte
+7. certificado_fiscal - Certificado de situación fiscal (ATR)
+8. extranjero - Documento de registro extranjero (requiere verificación manual)
 
 TEXTO DEL DOCUMENTO (primeras 2000 caracteres):
 {texto[:2000]}
@@ -134,7 +92,7 @@ Responde SOLO con este JSON exacto, sin texto adicional:
     "accion": "procesar"
 }}
 
-Para "accion" usa: "procesar" (tipos 1-8) o "manual" (tipo 9 extranjero)
+Para "accion" usa: "procesar" (tipos 1-7) o "manual" (tipo 8 extranjero)
 Para "confianza" usa un número del 0 al 100."""
 
     respuesta = cliente.messages.create(
@@ -179,15 +137,6 @@ def extraer_campos(texto: str, tipo_documento: str) -> list:
             "nif_cif", "objeto_social", "capital_social", "notario",
             "numero_protocolo", "fecha_inscripcion_registro"
         ],
-        "escritura_ampliacion_capital": [
-            "fecha_escritura", "denominacion_social", "nif_cif",
-            "capital_social_anterior", "capital_social",
-            "importe_ampliacion", "numero_participaciones_nuevas",
-            "valor_nominal_participacion", "prima_asuncion",
-            "socio_aportante", "naturaleza_aportacion",
-            "notario", "numero_protocolo",
-            "fecha_diligencia_subsanacion", "fecha_inscripcion_registro"
-        ],
         "acta_titularidad": [
             "fecha_documento", "denominacion_entidad", "nombre_titular",
             "nif_titular", "nacionalidad_titular", "fecha_nacimiento_titular",
@@ -210,17 +159,13 @@ Del siguiente documento de tipo "{TIPOS_DOCUMENTO.get(tipo_documento, tipo_docum
 {json.dumps(campos, ensure_ascii=False, indent=2)}
 
 TEXTO DEL DOCUMENTO:
-{texto[:25000]}
+{texto[:3000]}
 
 Reglas:
 - Si un campo no aparece en el documento, usa null
 - Las fechas en formato DD/MM/YYYY
 - El NIF/CIF sin guiones (ej: B12345678)
 - Para campos de administradores (pueden ser varios), devuelve una lista
-- Los importes en € usa solo el número con punto decimal (ej: 201506.00). Si el importe aparece escrito en palabras (ej: "DOSCIENTOS UN MIL QUINIENTOS SEIS EUROS") conviértelo igualmente a número (201506.00)
-- Para "capital_social" busca frases como "El capital social se fija en", "capital social... EUROS", "QUEDA AUMENTADO el capital social", o el artículo de estatutos que define la cifra de capital
-- "fecha_diligencia_subsanacion" solo aparece si el documento incluye una diligencia notarial posterior que corrige errores; si no existe, usa null
-- "fecha_inscripcion_registro" busca frases como "ha sido inscrita con fecha", "inscripción 5ª" con su fecha asociada
 
 Responde SOLO con este JSON, sin texto adicional:
 {{
@@ -232,7 +177,7 @@ Responde SOLO con este JSON, sin texto adicional:
 
     respuesta = cliente.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=3000,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}]
     )
 
@@ -247,7 +192,7 @@ Responde SOLO con este JSON, sin texto adicional:
     return resultado.get("campos", [])
 
 
-def procesar_documento_kyc(ruta_pdf: str) -> dict:
+def procesar_documento_kyc(ruta_pdf: str, texto_ocr: str = None) -> dict:
     """
     Función principal: pipeline completo de un documento KYC.
     Llama a los 3 pasos en orden y devuelve el resultado final.
@@ -260,10 +205,14 @@ def procesar_documento_kyc(ruta_pdf: str) -> dict:
     print(f"📄 Procesando: {Path(ruta_pdf).name}")
     print(f"{'='*50}")
 
-    # PASO 1: Extraer texto del PDF
+    # PASO 1: Extraer texto del PDF (o usar el texto OCR ya extraído)
     print("1️⃣  Extrayendo texto del PDF...")
-    texto = extraer_texto_pdf(ruta_pdf)
-    print(f"   ✅ {len(texto)} caracteres extraídos")
+    if texto_ocr:
+        texto = texto_ocr
+        print(f"   ✅ {len(texto)} caracteres (texto OCR del preprocesador)")
+    else:
+        texto = extraer_texto_pdf(ruta_pdf)
+        print(f"   ✅ {len(texto)} caracteres extraídos")
 
     # PASO 2: Clasificar el documento
     print("2️⃣  Clasificando documento con LegNER...")
