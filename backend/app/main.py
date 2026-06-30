@@ -429,15 +429,11 @@ async def corregir_campo(expediente_id: str, nombre_campo: str, body: CampoCorre
 
 @app.get("/expedientes/{expediente_id}/campos/{nombre_campo}/visor", tags=["Documentos · LegNER"])
 async def visor_campo(expediente_id: str, nombre_campo: str, db=Depends(get_db)):
-    """
-    Devuelve el texto del documento fuente del campo como HTML,
-    con el valor actual y términos relacionados resaltados en amarillo.
-    """
-    import re, html as html_lib
+    """Muestra campos del documento fuente con resaltado. Usa PDF si existe, sino campos de BD."""
+    import re, html as html_lib, os
     async with db.acquire() as conn:
-        # Buscar documento fuente del campo vigente
         row = await conn.fetchrow(
-            """SELECT ce.valor, d.ruta_archivo, d.nombre_archivo, d.tipo_documento
+            """SELECT ce.valor, d.id as doc_id, d.ruta_archivo, d.nombre_archivo, d.tipo_documento
                FROM campos_extraidos ce
                JOIN documentos d ON d.id = ce.documento_id
                WHERE ce.expediente_id = $1::uuid AND ce.nombre_campo = $2
@@ -445,78 +441,67 @@ async def visor_campo(expediente_id: str, nombre_campo: str, db=Depends(get_db))
             expediente_id, nombre_campo)
         if not row:
             raise HTTPException(404, f"Campo '{nombre_campo}' no encontrado")
+        todos_campos = await conn.fetch(
+            "SELECT nombre_campo, valor, confianza, revisado_manualmente FROM campos_extraidos WHERE documento_id = $1::uuid ORDER BY nombre_campo",
+            row["doc_id"])
 
-    # Extraer texto del PDF
-    try:
-        from app.services.legner_engine import extraer_texto_pdf
-        texto = extraer_texto_pdf(row["ruta_archivo"])
-    except Exception as e:
-        raise HTTPException(500, f"Error leyendo documento: {e}")
-
-    # Términos a resaltar: valor actual + variantes del nombre del campo
     valor_actual = str(row["valor"] or "")
-    terminos_campo = {
-        "capital_social": ["capital social", "cifra capital", "artículo 6", "se fija en"],
+    terminos_map = {
+        "capital_social": ["capital social", "cifra capital", "articulo 6", "se fija en"],
         "capital_social_anterior": ["capital social", "capital anterior"],
         "domicilio_social": ["domicilio", "calle", "avenida", "plaza"],
-        "denominacion_social": ["denominada", "denominación", "mercantil"],
-        "nif_cif": ["nif", "cif", "b88", "b-88"],
+        "denominacion_social": ["denominada", "denominacion", "mercantil"],
+        "nif_cif": ["nif", "cif", "b88"],
         "fecha_escritura": ["escritura", "otorgada", "autorizada"],
-        "fecha_inscripcion_registro": ["inscrita", "inscripción", "registro mercantil"],
+        "fecha_inscripcion_registro": ["inscrita", "inscripcion", "registro mercantil"],
         "fecha_diligencia_subsanacion": ["diligencia", "subsanan", "errores"],
     }
-    terminos = terminos_campo.get(nombre_campo, [nombre_campo.replace("_", " ")])
+    terminos = terminos_map.get(nombre_campo, [nombre_campo.replace("_", " ")])
 
-    # Construir HTML: escapar texto y resaltar términos
-    texto_escapado = html_lib.escape(texto)
+    def resaltar(t):
+        if valor_actual and len(valor_actual) > 2:
+            t = re.sub(f"({re.escape(valor_actual)})",
+                r'<mark style="background:#fde68a;color:#92400e;font-weight:700;border-radius:2px">\1</mark>',
+                t, flags=re.IGNORECASE)
+        for term in terminos:
+            t = re.sub(f"({re.escape(term)})",
+                r'<mark style="background:#bfdbfe;color:#1e3a8a;border-radius:2px">\1</mark>',
+                t, flags=re.IGNORECASE)
+        return t
 
-    # Resaltar valor actual (si es legible como texto)
-    if valor_actual and len(valor_actual) > 2:
-        patron_valor = re.escape(valor_actual)
-        texto_escapado = re.sub(
-            f"({patron_valor})",
-            r'<mark style="background:#fde68a;color:#92400e;font-weight:700;border-radius:2px">\1</mark>',
-            texto_escapado, flags=re.IGNORECASE)
+    texto_pdf = None
+    try:
+        if os.path.exists(row["ruta_archivo"]):
+            from app.services.legner_engine import extraer_texto_pdf
+            texto_pdf = extraer_texto_pdf(row["ruta_archivo"])
+    except Exception:
+        texto_pdf = None
 
-    # Resaltar términos relacionados con el campo
-    for termino in terminos:
-        patron = re.escape(termino)
-        texto_escapado = re.sub(
-            f"({patron})",
-            r'<mark style="background:#bfdbfe;color:#1e3a8a;border-radius:2px">\1</mark>',
-            texto_escapado, flags=re.IGNORECASE)
+    if texto_pdf:
+        parrafos = [f'<p style="margin-bottom:6px;line-height:1.6">{ln.strip()}</p>'
+                    for ln in resaltar(html_lib.escape(texto_pdf)).split("\n") if ln.strip()]
+        cuerpo = "".join(parrafos)
+        modo = "Texto completo del documento"
+    else:
+        filas = []
+        for c in todos_campos:
+            es = c["nombre_campo"] == nombre_campo
+            bg = "#fef3c7" if es else "#fff"
+            fw = "700" if es else "400"
+            rev = " ✓" if c["revisado_manualmente"] else ""
+            val = resaltar(html_lib.escape(str(c["valor"] or "")))
+            nm = html_lib.escape(c["nombre_campo"].replace("_", " "))
+            filas.append(f'<tr style="background:{bg}"><td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-weight:{fw}">{nm}{rev}</td><td style="padding:6px 10px;border-bottom:1px solid #f3f4f6">{val}</td><td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;color:#9ca3af;font-size:11px">{c["confianza"]}%</td></tr>')
+        cuerpo = ('<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#856404">⚠️ PDF no disponible. Se muestran los <strong>campos extraídos por LegNER</strong>. El campo que revisas aparece en amarillo.</div>'
+            + '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f8fafc"><th style="padding:8px 10px;text-align:left;border-bottom:2px solid #e5e7eb;color:#6b7280;font-size:11px">CAMPO</th><th style="padding:8px 10px;text-align:left;border-bottom:2px solid #e5e7eb;color:#6b7280;font-size:11px">VALOR</th><th style="padding:8px 10px;text-align:left;border-bottom:2px solid #e5e7eb;color:#6b7280;font-size:11px">CONF.</th></tr></thead><tbody>'
+            + "".join(filas) + '</tbody></table>')
+        modo = "Campos extraídos por LegNER (PDF no disponible)"
 
-    # Convertir saltos de línea a párrafos HTML
-    parrafos = []
-    for linea in texto_escapado.split("\n"):
-        linea = linea.strip()
-        if linea:
-            parrafos.append(f'<p style="margin-bottom:6px;line-height:1.6">{linea}</p>')
-
-    html_visor = f"""<!DOCTYPE html><html lang="es"><head>
-<meta charset="UTF-8">
-<style>
-  body {{ font-family: Georgia, serif; font-size: 13px; color: #1a1a2e;
-         max-width: 900px; margin: 0 auto; padding: 20px; background: #fff; }}
-  .doc-header {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
-                 padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #6b7280; }}
-  .doc-header strong {{ color: #1a1a2e; }}
-  .leyenda {{ display: flex; gap: 16px; margin-bottom: 12px; font-size: 11px; }}
-  .leyenda span {{ display: flex; align-items: center; gap: 4px; }}
-  mark {{ padding: 1px 2px; }}
-</style></head><body>
-<div class="doc-header">
-  <strong>{html_lib.escape(row['nombre_archivo'])}</strong> ·
-  Tipo: {html_lib.escape(row['tipo_documento'] or 'desconocido')} ·
-  Campo: <strong>{nombre_campo.replace('_',' ')}</strong> ·
-  Valor actual: <strong>{html_lib.escape(valor_actual)}</strong>
-</div>
-<div class="leyenda">
-  <span><mark style="background:#fde68a;color:#92400e">▌</mark> Valor actual del campo</span>
-  <span><mark style="background:#bfdbfe;color:#1e3a8a">▌</mark> Términos relacionados</span>
-</div>
-<div class="doc-content">{''.join(parrafos)}</div>
-</body></html>"""
+    h = html_lib.escape
+    html_visor = (f'<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;color:#1a1a2e;max-width:960px;margin:0 auto;padding:20px;background:#fff}}.hdr{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-size:12px;color:#6b7280}}.hdr strong{{color:#1a1a2e}}mark{{padding:1px 3px;border-radius:2px}}</style></head><body>'
+        + f'<div class="hdr"><strong>{h(row["nombre_archivo"])}</strong> · Tipo: {h(row["tipo_documento"] or "desconocido")} · Campo: <strong>{nombre_campo.replace("_"," ")}</strong> · Valor actual: <strong style="color:#0F6E56">{h(valor_actual)}</strong><br><span style="font-size:10px;margin-top:4px;display:inline-block">📋 {modo}</span></div>'
+        + '<div style="display:flex;gap:16px;margin-bottom:14px;font-size:11px;color:#6b7280"><span>🟡 <mark style="background:#fde68a;color:#92400e">Valor actual</mark></span><span>🔵 <mark style="background:#bfdbfe;color:#1e3a8a">Términos relacionados</mark></span></div>'
+        + cuerpo + '</body></html>')
 
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html_visor)
