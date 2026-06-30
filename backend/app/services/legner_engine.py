@@ -20,11 +20,15 @@ import json
 import os
 from pathlib import Path
 
+# ── OCR fallback para PDFs escaneados
+from pdf2image import convert_from_path
+import pytesseract
+
 # ── Leer la API Key del archivo .env
 from dotenv import load_dotenv
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
 # ── Los 8 tipos de documento KYC que reconoce LegNER
 TIPOS_DOCUMENTO = {
@@ -39,10 +43,34 @@ TIPOS_DOCUMENTO = {
 }
 
 
+def extraer_texto_ocr(ruta_pdf: str, max_paginas: int = 20) -> str:
+    """
+    Fallback OCR: convierte el PDF a imágenes y extrae texto con Tesseract.
+    Se usa cuando pdfplumber no encuentra texto seleccionable (PDF escaneado).
+    """
+    texto = ""
+    try:
+        imagenes = convert_from_path(ruta_pdf, dpi=300, fmt="png")
+    except Exception as e:
+        raise Exception(f"Error convirtiendo PDF a imagen para OCR: {e}")
+
+    for i, imagen in enumerate(imagenes[:max_paginas]):
+        try:
+            texto_pagina = pytesseract.image_to_string(imagen, lang="spa+eng")
+            if texto_pagina:
+                texto += texto_pagina + "\n"
+        except Exception as e:
+            print(f"   ⚠️ OCR falló en página {i+1}: {e}")
+            continue
+
+    return texto.strip()
+
+
 def extraer_texto_pdf(ruta_pdf: str) -> str:
     """
     Paso 1: Lee el PDF y extrae todo el texto.
-    pdfplumber es mejor que PyPDF2 para documentos legales españoles.
+    Primero intenta pdfplumber (PDFs nativos con texto seleccionable).
+    Si no encuentra texto (PDF escaneado como imagen), recurre a OCR con Tesseract.
     """
     texto = ""
     try:
@@ -54,8 +82,18 @@ def extraer_texto_pdf(ruta_pdf: str) -> str:
     except Exception as e:
         raise Exception(f"Error leyendo PDF: {e}")
 
-    if not texto.strip():
-        raise Exception("El PDF no tiene texto extraíble (puede ser una imagen escaneada)")
+    texto = texto.strip()
+
+    # Fallback OCR si pdfplumber no extrajo texto suficiente (PDF escaneado)
+    if len(texto) < 50:
+        print("   ℹ️  PDF sin texto nativo detectado · activando OCR con Tesseract...")
+        texto = extraer_texto_ocr(ruta_pdf)
+
+    if not texto or len(texto.strip()) < 20:
+        raise Exception(
+            "No se pudo extraer texto del PDF, ni de forma nativa ni mediante OCR. "
+            "El documento puede tener muy baja calidad de escaneo."
+        )
 
     return texto.strip()
 
@@ -192,7 +230,7 @@ Responde SOLO con este JSON, sin texto adicional:
     return resultado.get("campos", [])
 
 
-def procesar_documento_kyc(ruta_pdf: str, texto_ocr: str = None) -> dict:
+def procesar_documento_kyc(ruta_pdf: str) -> dict:
     """
     Función principal: pipeline completo de un documento KYC.
     Llama a los 3 pasos en orden y devuelve el resultado final.
@@ -205,14 +243,10 @@ def procesar_documento_kyc(ruta_pdf: str, texto_ocr: str = None) -> dict:
     print(f"📄 Procesando: {Path(ruta_pdf).name}")
     print(f"{'='*50}")
 
-    # PASO 1: Extraer texto del PDF (o usar el texto OCR ya extraído)
+    # PASO 1: Extraer texto del PDF
     print("1️⃣  Extrayendo texto del PDF...")
-    if texto_ocr:
-        texto = texto_ocr
-        print(f"   ✅ {len(texto)} caracteres (texto OCR del preprocesador)")
-    else:
-        texto = extraer_texto_pdf(ruta_pdf)
-        print(f"   ✅ {len(texto)} caracteres extraídos")
+    texto = extraer_texto_pdf(ruta_pdf)
+    print(f"   ✅ {len(texto)} caracteres extraídos")
 
     # PASO 2: Clasificar el documento
     print("2️⃣  Clasificando documento con LegNER...")
