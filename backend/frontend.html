@@ -458,107 +458,200 @@ async function cargarSelectAML() {
 
 async function cargarPanelAML(id) {
   if (!id) return;
-  document.getElementById('panel-aml-contenido').innerHTML = '<div class="loading"><div class="spinner"></div> Cargando panel AML...</div>';
-
+  document.getElementById('panel-aml-contenido').innerHTML =
+    '<div class="loading"><div class="spinner"></div> Cargando panel AML completo...</div>';
   try {
-    const [rExp, rCampos] = await Promise.all([
+    const [rExp, rCampos, rSanciones] = await Promise.all([
       fetch(`${API}/expedientes/${id}`),
-      fetch(`${API}/expedientes/${id}/campos`)
+      fetch(`${API}/expedientes/${id}/campos`),
+      fetch(`${API}/api/sanciones/expediente/${id}`).catch(() => null)
     ]);
-    const exp = await rExp.json();
+    const exp    = await rExp.json();
     const campos = await rCampos.json();
+    const sanciones = rSanciones && rSanciones.ok ? await rSanciones.json() : null;
 
-    // Intentar obtener scoring existente
     let scoring = null;
     try {
       const rScoring = await fetch(`${API}/expedientes/${id}/scoring`);
       if (rScoring.ok) scoring = await rScoring.json();
     } catch(e) {}
 
-    const e = exp.expediente;
+    const e        = exp.expediente;
     const scoreVal = e.score_ebr || 0;
-    const nivelClass = scoreVal >= 70 ? 'score-alto' : scoreVal >= 30 ? 'score-medio' : 'score-bajo';
-    const nivelLabel = e.nivel_riesgo === 'sin_calcular' ? '—' : e.nivel_riesgo?.toUpperCase();
+    const nivelClass = scoreVal >= 70 ? 'score-muy-alto' : scoreVal >= 50 ? 'score-alto' : scoreVal >= 30 ? 'score-medio' : 'score-bajo';
 
     let html = `<div style="padding:20px">`;
 
-    // Alerta SAR si score alto
     if (scoreVal >= 70) {
       html += `<div class="alert-warn" style="margin-bottom:16px">
         🚨 <strong>Score ≥ 70 · Comunicación al SEPBLAC obligatoria</strong><br>
-        Art. 18 Ley 10/2010 · Plazo máximo: 10 días hábiles desde la detección
+        <span style="font-size:12px">Art. 18 Ley 10/2010 · Plazo máximo: 10 días hábiles desde la detección</span>
       </div>`;
     }
 
-    // Cabecera con score
-    html += `<div style="display:flex;gap:20px;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap">
+    // ── Cabecera ──
+    html += `<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:20px">
       <div class="score-circle ${nivelClass}">
         <div>${scoreVal}</div>
         <div style="font-size:10px;font-weight:600;margin-top:2px">/100</div>
       </div>
       <div style="flex:1;min-width:200px">
         <div style="font-size:18px;font-weight:800;color:#111;margin-bottom:4px">${e.denominacion}</div>
-        <div style="font-size:13px;color:#6b7280;margin-bottom:8px">${e.codigo} · ${e.nif||'NIF pendiente'}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${badgeEstado(e.estado)}
-          ${badgeRiesgo(e.nivel_riesgo)}
+        <div style="font-size:13px;color:#6b7280;margin-bottom:10px">${e.codigo} · ${e.nif||'NIF pendiente'}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          ${badgeEstado(e.estado)} ${badgeRiesgo(e.nivel_riesgo)}
           ${e.aml_officer_nombre ? `<span class="badge badge-en-proceso">👤 ${e.aml_officer_nombre}</span>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="exportarPDF('${id}')">📄 Exportar PDF</button>
+          <button class="btn btn-outline btn-sm" onclick="calcularScoring('${id}', this)">🔄 Recalcular EBR</button>
         </div>
       </div>
     </div>`;
 
-    // Scoring EBR visual (si existe)
+    // ── EBR v2.0 ──
     if (scoring) {
-      html += `<div style="margin-bottom:20px">
-        <div style="font-size:13px;font-weight:700;margin-bottom:12px">📊 Scoring EBR · 5 Dimensiones</div>`;
-
       const dims = [
-        { label: 'Factor cliente · PEP/UBO', val: scoring.riesgo_cliente, color: scoring.riesgo_cliente>=70?'fill-rojo':scoring.riesgo_cliente>=40?'fill-naranja':'fill-verde' },
-        { label: 'Adverse Media', val: scoring.riesgo_canal, color: scoring.riesgo_canal>=70?'fill-rojo':scoring.riesgo_canal>=40?'fill-naranja':'fill-verde' },
-        { label: 'Producto / Canal', val: scoring.riesgo_producto, color: scoring.riesgo_producto>=70?'fill-rojo':scoring.riesgo_producto>=40?'fill-naranja':'fill-verde' },
-        { label: 'Factor geográfico', val: scoring.riesgo_geografico, color: scoring.riesgo_geografico>=70?'fill-rojo':scoring.riesgo_geografico>=40?'fill-naranja':'fill-verde' },
-        { label: 'Controles aplicados (−)', val: scoring.controles_aplicados, color: 'fill-azul' }
+        { label: 'Factor Cliente · PEP/UBO (30%)',          val: scoring.riesgo_cliente    || 0 },
+        { label: 'Adverse Media · Noticias negativas (20%)', val: scoring.riesgo_adverse_media || scoring.riesgo_canal || 0 },
+        { label: 'Producto / Canal (5%)',                    val: scoring.riesgo_producto   || 0 },
+        { label: 'Factor Geográfico (20%)',                  val: scoring.riesgo_geografico || 0 },
+        { label: 'BORME · Señales registrales (25%)',        val: scoring.riesgo_borme      || 0 }
       ];
-
+      const fc = v => v >= 70 ? '#dc2626' : v >= 40 ? '#d97706' : '#0F6E56';
+      const ff = v => v >= 70 ? 'fill-rojo' : v >= 40 ? 'fill-naranja' : 'fill-verde';
+      html += `<div style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px">📊 Scoring EBR v2.0 · 5 Dimensiones</div>`;
       dims.forEach(d => {
         html += `<div class="dim-bar">
           <div class="dim-bar-top">
             <span class="dim-bar-label">${d.label}</span>
-            <span class="dim-bar-val" style="color:${d.color.includes('rojo')?'#dc2626':d.color.includes('naranja')?'#d97706':d.color.includes('azul')?'#003C96':'#0F6E56'}">${d.val}</span>
+            <span class="dim-bar-val" style="color:${fc(d.val)}">${d.val}</span>
           </div>
-          <div class="dim-bar-track"><div class="dim-bar-fill ${d.color}" style="width:${d.val}%"></div></div>
+          <div class="dim-bar-track"><div class="dim-bar-fill ${ff(d.val)}" style="width:${Math.min(d.val,100)}%"></div></div>
         </div>`;
       });
-
-      html += `<div style="display:flex;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid #f3f4f6;font-size:12px">
-        <span>Score inherente: <strong>${scoring.score_inherente}</strong></span>
-        <span>Controles: <strong>−${scoring.controles_aplicados}</strong></span>
-        <span>Score residual: <strong style="color:${scoring.score_residual>=70?'#dc2626':scoring.score_residual>=30?'#d97706':'#0F6E56'}">${scoring.score_residual}</strong></span>
-        <span>Media sectorial: <strong>58</strong></span>
+      html += `<div style="display:flex;gap:16px;margin-top:10px;padding:10px 12px;background:#f8fafc;border-radius:8px;font-size:12px;flex-wrap:wrap">
+        <span>Score inherente: <strong>${scoring.score_inherente??'—'}</strong></span>
+        <span>Controles: <strong style="color:#003C96">−${scoring.controles_aplicados??0}</strong></span>
+        <span>Score residual: <strong style="color:${fc(scoring.score_residual??scoreVal)}">${scoring.score_residual??scoreVal}</strong></span>
+        <span style="color:#9ca3af">Ref. sectorial: <strong>58</strong></span>
       </div></div>`;
     } else {
       html += `<div class="alert-info" style="margin-bottom:16px">
         ℹ️ Sin scoring calculado.
-        <button class="btn btn-primary btn-sm" style="margin-left:10px" onclick="calcularScoring('${id}')">Calcular EBR ahora</button>
+        <button class="btn btn-primary btn-sm" style="margin-left:10px" onclick="calcularScoring('${id}', this)">Calcular EBR ahora</button>
       </div>`;
     }
 
-    // Campos extraídos resumen
-    if (campos.campos.length) {
+    // ── BORME ──
+    const _bd  = (scoring && scoring.datos_borme) || null;
+    const borme = typeof _bd === 'string' ? JSON.parse(_bd) : _bd;
+    const senales = (scoring && scoring.senales_borme) || [];
+    if (borme && borme.encontrado) {
       html += `<div style="margin-bottom:20px">
-        <div style="font-size:13px;font-weight:700;margin-bottom:10px">🔍 Campos KYC extraídos (${campos.total_campos})</div>
-        <div class="campos-grid">`;
-      campos.campos.slice(0, 8).forEach(c => {
-        html += `<div class="campo-card"><div class="campo-nombre">${c.nombre_campo.replace(/_/g,' ')}</div><div class="campo-valor">${c.valor}</div><div class="campo-conf">${c.confianza}%</div></div>`;
-      });
-      html += '</div></div>';
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">🏢 Datos Registrales BORME · OpenMercantil</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+          ${borme.nombre_oficial?`<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:#9ca3af;text-transform:uppercase;margin-bottom:3px">Denominación</div><div style="font-size:12px;font-weight:600">${borme.nombre_oficial}</div></div>`:''}
+          ${borme.nif?`<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:#9ca3af;text-transform:uppercase;margin-bottom:3px">NIF</div><div style="font-size:12px;font-weight:600">${borme.nif}</div></div>`:''}
+          ${borme.forma_juridica?`<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:#9ca3af;text-transform:uppercase;margin-bottom:3px">Forma jurídica</div><div style="font-size:12px;font-weight:600">${borme.forma_juridica}</div></div>`:''}
+          ${borme.situacion?`<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:#9ca3af;text-transform:uppercase;margin-bottom:3px">Situación</div><div style="font-size:12px;font-weight:600">${borme.situacion}</div></div>`:''}
+          ${borme.domicilio?`<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:#9ca3af;text-transform:uppercase;margin-bottom:3px">Domicilio</div><div style="font-size:12px;font-weight:600">${borme.domicilio}</div></div>`:''}
+          ${borme.capital_social?`<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:#9ca3af;text-transform:uppercase;margin-bottom:3px">Capital social</div><div style="font-size:12px;font-weight:600">${borme.capital_social}</div></div>`:''}
+        </div>
+        ${senales && senales.length > 0
+          ? `<div style="margin-top:10px">${senales.map(s=>`<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px;background:#fff3cd;color:#856404;border:1px solid #ffc107">⚠️ ${s}</span>`).join('')}</div>`
+          : `<div style="margin-top:10px;font-size:12px;color:#0F6E56">✅ Sin señales de alerta registrales</div>`
+        }
+      </div>`;
+    } else if (borme && !borme.encontrado) {
+      html += `<div style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">🏢 Datos Registrales BORME</div>
+        <div style="font-size:12px;color:#6b7280;padding:10px;background:#f8fafc;border-radius:8px">ℹ️ Empresa no encontrada en el Registro Mercantil vía OpenMercantil.</div>
+      </div>`;
     }
 
-    // Audit trail
-    if (exp.audit_trail.length) {
+    // ── Sanciones ──
+    html += `<div style="margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">🔍 Screening Sanciones · OpenSanctions</div>`;
+    if (sanciones && sanciones.resultados && sanciones.resultados.length > 0) {
+      const hits = sanciones.resultados.filter(r => r.score >= 0.6);
+      if (hits.length > 0) {
+        html += `<div class="alert-error" style="margin-bottom:12px">🚨 <strong>${hits.length} coincidencia(s)</strong> en listas de sanciones</div>`;
+        hits.forEach(h => {
+          html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start">
+            <div><div style="font-size:13px;font-weight:700;color:#991b1b">${h.nombre||h.entity?.caption||'—'}</div>
+            <div style="font-size:11px;color:#dc2626">${h.datasets?h.datasets.join(' · '):''}</div></div>
+            <div style="font-size:22px;font-weight:800;color:#dc2626">${Math.round((h.score||0)*100)}%</div>
+          </div>`;
+        });
+      } else {
+        html += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;font-size:13px">✅ <strong>Sin coincidencias</strong> en listas de sanciones OFAC, UE, ONU</div>`;
+      }
+    } else {
+      html += `<div style="font-size:12px;color:#6b7280;padding:10px;background:#f8fafc;border-radius:8px">⚪ Screening no ejecutado. Se ejecuta automáticamente al calcular el EBR.</div>`;
+    }
+    html += '</div>';
+
+    // ── Campos KYC consolidados (valor vigente + histórico por fecha de escritura) ──
+    let consolidado = null;
+    try {
+      const rCons = await fetch(`${API}/expedientes/${id}/campos-consolidados`);
+      if (rCons.ok) consolidado = await rCons.json();
+    } catch(e) {}
+
+    if (consolidado && consolidado.campos_consolidados.length) {
+      const lista = consolidado.campos_consolidados;
+      const primeros = lista.slice(0, 8);
+      const resto    = lista.slice(8);
+      const cc = v => v==null ? '#9ca3af' : v>=80?'#0F6E56':v>=50?'#d97706':'#dc2626';
+
+      const renderCampo = (c) => {
+        const histId = 'hist_' + c.nombre_campo.replace(/[^a-zA-Z0-9]/g,'_');
+        let html = `<div class="campo-card" style="position:relative">
+          <div class="campo-nombre">${c.nombre_campo.replace(/_/g,' ')}</div>
+          <div class="campo-valor">${c.valor_vigente}</div>
+          <div class="campo-conf" style="color:${cc(c.confianza_vigente)}">${c.confianza_vigente!=null?c.confianza_vigente+'%':''} ${c.fecha_vigente?'· '+c.fecha_vigente:''}</div>`;
+        if (c.tiene_historial) {
+          html += `<span style="font-size:10px;color:#003C96;cursor:pointer;font-weight:700;display:inline-block;margin-top:4px" onclick="const e=document.getElementById('${histId}');e.style.display=e.style.display==='none'?'block':'none'">📜 Ver evolución (${c.historial.length})</span>
+          <div id="${histId}" style="display:none;margin-top:6px;border-top:1px dashed #d1d5db;padding-top:6px">
+            ${c.historial.map((h,i) => `<div style="font-size:10px;color:#6b7280;margin-bottom:3px;${i===c.historial.length-1?'font-weight:700;color:#0F6E56':''}">
+              ${h.fecha_documento||h.fecha_subida||'sin fecha'} — <strong>${h.valor}</strong> <span style="color:#9ca3af">(${h.nombre_archivo})</span> ${i===c.historial.length-1?' ✓ vigente':''}
+            </div>`).join('')}
+          </div>`;
+        }
+        html += '</div>';
+        return html;
+      };
+
       html += `<div style="margin-bottom:20px">
-        <div style="font-size:13px;font-weight:700;margin-bottom:10px">🔗 Audit Trail · Últimos eventos</div>`;
-      exp.audit_trail.forEach(a => {
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">🔍 Campos KYC consolidados <span style="font-weight:400;color:#6b7280">(${consolidado.total_campos} campos · ${consolidado.campos_con_historial} con histórico de cambios)</span></div>
+        <div class="campos-grid">
+          ${primeros.map(renderCampo).join('')}
+        </div>`;
+      if (resto.length > 0) {
+        html += `<span style="font-size:12px;color:#003C96;cursor:pointer;font-weight:600;margin-top:8px;display:inline-block" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'grid':'none';this.textContent=this.textContent.includes('▼')?this.textContent.replace('▼','▲'):this.textContent.replace('▲','▼')">▼ Ver ${resto.length} campos más</span>
+        <div style="display:none;margin-top:8px" class="campos-grid">
+          ${resto.map(renderCampo).join('')}
+        </div>`;
+      }
+      html += '</div>';
+    } else if (campos.campos.length) {
+      // Fallback: vista simple sin consolidar (por si el endpoint nuevo no responde)
+      const primeros = campos.campos.slice(0, 8);
+      const cc = v => v>=80?'#0F6E56':v>=50?'#d97706':'#dc2626';
+      html += `<div style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">🔍 Campos KYC extraídos <span style="font-weight:400;color:#6b7280">(${campos.total_campos} total)</span></div>
+        <div class="campos-grid">
+          ${primeros.map(c=>`<div class="campo-card"><div class="campo-nombre">${c.nombre_campo.replace(/_/g,' ')}</div><div class="campo-valor">${c.valor}</div><div class="campo-conf" style="color:${cc(c.confianza)}">${c.confianza}%</div></div>`).join('')}
+        </div></div>`;
+    }
+
+    // ── Audit trail ──
+    if (exp.audit_trail && exp.audit_trail.length) {
+      html += `<div style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">🔗 Audit Trail · Últimos eventos</div>`;
+      exp.audit_trail.slice(0,5).forEach(a => {
         html += `<div class="audit-item"><div class="audit-dot"></div><div>
           <div class="audit-evento">${a.tipo_evento.replace(/_/g,' ').toUpperCase()}</div>
           <div class="audit-desc">${a.descripcion||'—'}</div>
@@ -568,29 +661,33 @@ async function cargarPanelAML(id) {
       html += '</div>';
     }
 
-    // DECISIÓN AML OFFICER
+    // ── Decisión AML ──
     html += `<div style="margin-bottom:16px">
-      <div style="font-size:13px;font-weight:700;margin-bottom:12px">⚖️ Decisión AML Officer · Segunda Línea de Defensa</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">⚖️ Decisión AML Officer · Segunda Línea de Defensa</div>
       <div class="decision-grid">
         <div class="decision-btn d-aprobar" onclick="tomarDecision('${id}','aprobar')">
-          <div class="d-icon">✅</div>
-          <div class="d-title">Aprobar con DDR</div>
+          <div class="d-icon">✅</div><div class="d-title">Aprobar con DDR</div>
           <div class="d-desc">Diligencia Debida Reforzada · Sellar en blockchain</div>
         </div>
         <div class="decision-btn d-sar" onclick="generarSAR('${id}')">
-          <div class="d-icon">📋</div>
-          <div class="d-title">Generar SAR</div>
+          <div class="d-icon">📋</div><div class="d-title">Generar SAR</div>
           <div class="d-desc">Art. 18 Ley 10/2010 · Borrador automático LegNER</div>
         </div>
         <div class="decision-btn d-escalar" onclick="tomarDecision('${id}','escalar')">
-          <div class="d-icon">⬆️</div>
-          <div class="d-title">Escalar a Dirección</div>
+          <div class="d-icon">⬆️</div><div class="d-title">Escalar a Dirección</div>
           <div class="d-desc">Compliance · Nivel 3 · Notificación automática</div>
         </div>
-        <div class="decision-btn d-rescreening" onclick="calcularScoring('${id}')">
-          <div class="d-icon">🔄</div>
-          <div class="d-title">Recalcular EBR</div>
-          <div class="d-desc">Actualizar scoring con nuevos documentos</div>
+        <div class="decision-btn" style="border:1.5px solid #fca5a5;background:#fff5f5" onclick="tomarDecision('${id}','rechazar')">
+          <div class="d-icon">❌</div><div class="d-title" style="color:#dc2626">Rechazar expediente</div>
+          <div class="d-desc">Denegar operación · Registrar motivo</div>
+        </div>
+        <div class="decision-btn" style="border:1.5px solid #003C96" onclick="exportarPDF('${id}')">
+          <div class="d-icon">📄</div><div class="d-title">Exportar informe PDF</div>
+          <div class="d-desc">Informe KYC completo · Apto para auditoría</div>
+        </div>
+        <div class="decision-btn d-rescreening" onclick="calcularScoring('${id}', this)">
+          <div class="d-icon">🔄</div><div class="d-title">Recalcular EBR</div>
+          <div class="d-desc">Actualizar scoring con documentos actuales</div>
         </div>
       </div>
     </div>`;
@@ -599,23 +696,34 @@ async function cargarPanelAML(id) {
     document.getElementById('panel-aml-contenido').innerHTML = html;
 
   } catch(err) {
-    document.getElementById('panel-aml-contenido').innerHTML = `<div class="alert-error" style="margin:20px">❌ Error: ${err.message}</div>`;
+    document.getElementById('panel-aml-contenido').innerHTML =
+      `<div class="alert-error" style="margin:20px">❌ Error: ${err.message}</div>`;
   }
 }
 
-async function calcularScoring(id) {
-  const btn = event.target;
-  btn.textContent = '⏳ Calculando...';
-  btn.disabled = true;
+async function exportarPDF(id) {
   try {
-    const r = await fetch(`${API}/expedientes/${id}/scoring`, { method: 'POST' });
+    const r = await fetch(`${API}/api/expedientes/${id}/pdf`, { headers: getHeaders() });
+    if (!r.ok) throw new Error('Error generando PDF');
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `informe-kyc-${id}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { alert('Error exportando PDF: ' + e.message); }
+}
+
+async function calcularScoring(id, btn) {
+  const textoOriginal = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⏳ Calculando...'; btn.disabled = true; }
+  try {
+    const r = await fetch(`${API}/expedientes/${id}/scoring`, { method: 'POST', headers: getHeaders() });
     const d = await r.json();
     if (r.ok) {
       cargarPanelAML(id);
     } else {
       alert('Error: ' + (d.detail || 'Error desconocido'));
-      btn.textContent = 'Recalcular EBR';
-      btn.disabled = false;
+      if (btn) { btn.textContent = textoOriginal; btn.disabled = false; }
     }
   } catch(e) {
     alert('Error calculando scoring: ' + e.message);
@@ -808,7 +916,61 @@ async function cargarAudit(id) {
     </div></div>`).join('');
 }
 
-cargarDashboard();
+// ── AUTH ────────────────────────────────────────────────
+let authToken   = sessionStorage.getItem('cl_token') || null;
+let currentUser = JSON.parse(sessionStorage.getItem('cl_user') || 'null');
+
+function getHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': authToken ? 'Bearer ' + authToken : ''
+  };
+}
+
+async function doLogin() {
+  const email  = document.getElementById('login-email').value.trim();
+  const pass   = document.getElementById('login-pass').value;
+  const errDiv = document.getElementById('login-error');
+  errDiv.textContent = '';
+  if (!email || !pass) { errDiv.textContent = 'Introduce email y contraseña'; return; }
+  try {
+    const r = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(email)}&password=${encodeURIComponent(pass)}`
+    });
+    const d = await r.json();
+    if (!r.ok) { errDiv.textContent = d.detail || 'Credenciales incorrectas'; return; }
+    authToken   = d.access_token;
+    currentUser = { email, nombre: d.nombre, rol: d.rol };
+    sessionStorage.setItem('cl_token', authToken);
+    sessionStorage.setItem('cl_user', JSON.stringify(currentUser));
+    mostrarApp();
+  } catch(e) {
+    errDiv.textContent = 'Error de conexión';
+  }
+}
+
+function mostrarApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display   = 'block';
+  const userEl = document.getElementById('topbar-user');
+  if (userEl && currentUser) userEl.textContent = currentUser.nombre + ' · ' + currentUser.rol;
+  cargarDashboard();
+}
+
+function doLogout() {
+  authToken = null; currentUser = null;
+  sessionStorage.removeItem('cl_token');
+  sessionStorage.removeItem('cl_user');
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app-screen').style.display   = 'none';
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-pass').value  = '';
+}
+
+if (authToken) { mostrarApp(); }
+else { document.getElementById('login-screen').style.display = 'flex'; }
 </script>
 </body>
 </html>
