@@ -24,7 +24,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # ── Los 8 tipos de documento KYC que reconoce LegNER
 TIPOS_DOCUMENTO = {
@@ -192,7 +192,7 @@ Responde SOLO con este JSON, sin texto adicional:
     return resultado.get("campos", [])
 
 
-def procesar_documento_kyc(ruta_pdf: str) -> dict:
+def procesar_documento_kyc(ruta_pdf: str, texto_ocr: str = None) -> dict:
     """
     Función principal: pipeline completo de un documento KYC.
     Llama a los 3 pasos en orden y devuelve el resultado final.
@@ -205,10 +205,14 @@ def procesar_documento_kyc(ruta_pdf: str) -> dict:
     print(f"📄 Procesando: {Path(ruta_pdf).name}")
     print(f"{'='*50}")
 
-    # PASO 1: Extraer texto del PDF
+    # PASO 1: Extraer texto del PDF (o usar el texto OCR ya extraído)
     print("1️⃣  Extrayendo texto del PDF...")
-    texto = extraer_texto_pdf(ruta_pdf)
-    print(f"   ✅ {len(texto)} caracteres extraídos")
+    if texto_ocr:
+        texto = texto_ocr
+        print(f"   ✅ {len(texto)} caracteres (texto OCR del preprocesador)")
+    else:
+        texto = extraer_texto_pdf(ruta_pdf)
+        print(f"   ✅ {len(texto)} caracteres extraídos")
 
     # PASO 2: Clasificar el documento
     print("2️⃣  Clasificando documento con LegNER...")
