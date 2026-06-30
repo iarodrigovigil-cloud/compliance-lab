@@ -1,0 +1,7 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "buildAptPackages": ["tesseract-ocr"],
+  "deploy": {
+    "aptPackages": ["tesseract-ocr"]
+  }
+}
