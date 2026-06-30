@@ -281,8 +281,17 @@ def _parsear_fecha_es(valor: str):
     return None
 
 
-# Campos que representan la fecha "oficial" del propio documento (no de subida)
-_CAMPOS_FECHA_DOCUMENTO = ["fecha_escritura", "fecha_documento", "fecha_inscripcion_registro"]
+# Campos que representan la fecha "oficial" del propio documento (no de subida).
+# Orden de prioridad cuando varios coexisten en el mismo documento:
+# una diligencia de subsanación posterior prevalece sobre la fecha de inscripción,
+# que a su vez prevalece sobre la fecha de la escritura original.
+_CAMPOS_FECHA_DOCUMENTO = [
+    "fecha_diligencia_subsanacion",
+    "fecha_inscripcion_registro",
+    "fecha_escritura",
+    "fecha_documento",
+]
+_PRIORIDAD_FECHA = {nombre: i for i, nombre in enumerate(_CAMPOS_FECHA_DOCUMENTO)}
 
 
 @app.get("/expedientes/{expediente_id}/campos-consolidados", tags=["Documentos · LegNER"])
@@ -309,14 +318,20 @@ async def ver_campos_consolidados(expediente_id: str, db=Depends(get_db)):
     if not filas:
         return {"expediente_id": expediente_id, "campos_consolidados": []}
 
-    # 1 — Para cada documento, averiguar su "fecha real" (la de la escritura, no la de subida)
+    # 1 — Para cada documento, averiguar su "fecha real" (la de la escritura/diligencia, no la de subida)
     fecha_real_por_doc = {}
+    prioridad_actual_por_doc = {}
     for f in filas:
         if f["nombre_campo"] in _CAMPOS_FECHA_DOCUMENTO:
             fecha_parseada = _parsear_fecha_es(f["valor"])
-            if fecha_parseada:
-                # Si ya había una fecha para este doc, nos quedamos con la más específica (primera encontrada)
-                fecha_real_por_doc.setdefault(f["documento_id"], fecha_parseada)
+            if not fecha_parseada:
+                continue
+            prioridad_campo = _PRIORIDAD_FECHA[f["nombre_campo"]]
+            prioridad_previa = prioridad_actual_por_doc.get(f["documento_id"])
+            # Menor número = mayor prioridad (ej: diligencia de subsanación gana a fecha_escritura)
+            if prioridad_previa is None or prioridad_campo < prioridad_previa:
+                fecha_real_por_doc[f["documento_id"]] = fecha_parseada
+                prioridad_actual_por_doc[f["documento_id"]] = prioridad_campo
 
     # 2 — Agrupar todos los campos por nombre_campo
     from collections import defaultdict
@@ -341,11 +356,13 @@ async def ver_campos_consolidados(expediente_id: str, db=Depends(get_db)):
         if not con_valor:
             continue
 
-        # Orden cronológico: primero por fecha_documento (si existe), si no por fecha_subida
+        # Orden cronológico: primero por fecha_documento (si existe), luego por fecha_subida
+        # como criterio de desempate (resuelve el caso de dos documentos con la misma
+        # fecha_escritura, donde el subido más tarde es la versión corregida/vigente)
         def _clave_orden(h):
             if h["fecha_documento"]:
-                return (0, h["fecha_documento"])
-            return (1, h["fecha_subida"] or "")
+                return (0, h["fecha_documento"], h["fecha_subida"] or "")
+            return (1, "", h["fecha_subida"] or "")
 
         historial_ordenado = sorted(con_valor, key=_clave_orden)
         vigente = historial_ordenado[-1]  # el más reciente
