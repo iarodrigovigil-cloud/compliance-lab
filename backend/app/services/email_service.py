@@ -46,13 +46,15 @@ async def _enviar_email(destinatario: str, asunto: str, html: str) -> bool:
         mensaje["To"] = destinatario
         mensaje.attach(MIMEText(html, "html", "utf-8"))
 
+        usar_ssl_directo = SMTP_PORT == 465
         await aiosmtplib.send(
             mensaje,
             hostname=SMTP_HOST,
             port=SMTP_PORT,
             username=SMTP_USER,
             password=SMTP_PASSWORD,
-            start_tls=True,
+            use_tls=usar_ssl_directo,
+            start_tls=not usar_ssl_directo,
         )
         return True
     except Exception as e:
