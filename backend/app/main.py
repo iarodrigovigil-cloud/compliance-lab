@@ -1385,6 +1385,7 @@ async def ejecutar_agente3(db=Depends(get_db), user=Depends(require_admin)):
     4. Genera alertas en BD para cada incidencia detectada
     """
     from app.services.sanctions_engine import consultar_sanciones
+    from app.services.email_service import notificar_resumen_alertas
     alertas_generadas = []
     ahora = datetime.utcnow()
 
@@ -1398,11 +1399,12 @@ async def ejecutar_agente3(db=Depends(get_db), user=Depends(require_admin)):
             # ── 1. Expedientes activos de esta organización ──
             expedientes = await conn.fetch(
                 """SELECT e.id, e.denominacion, e.nif, e.estado, e.estado_supervision,
-                          e.fecha_actualizacion, e.score_ebr
+                          e.fecha_actualizacion, e.score_ebr, e.asignado_a
                    FROM expedientes e
                    WHERE e.organizacion_id=$1::uuid
                    AND e.estado NOT IN ('cerrado', 'archivado')""",
                 org_id)
+            alertas_org_actual = []
 
             for exp in expedientes:
                 exp_id = str(exp["id"])
@@ -1428,6 +1430,11 @@ async def ejecutar_agente3(db=Depends(get_db), user=Depends(require_admin)):
                         alertas_generadas.append({
                             "org": org["nombre"], "tipo": "expediente_abandonado",
                             "expediente": exp["denominacion"]})
+                        alertas_org_actual.append({
+                            "titulo": f"Expediente sin actividad: {exp['denominacion']}",
+                            "descripcion": f"Sin actividad hace {dias_sin_actividad} días (plazo: {org['plazo_revision_expediente']} días)",
+                            "severidad": "media", "expediente_id": exp_id,
+                            "asignado_a": exp["asignado_a"]})
 
                 # ── 3. Aprobación pendiente vencida ──────────
                 if exp["estado_supervision"] == "en_revision" and dias_sin_actividad > org["plazo_aprobacion_supervisor"]:
@@ -1449,6 +1456,11 @@ async def ejecutar_agente3(db=Depends(get_db), user=Depends(require_admin)):
                         alertas_generadas.append({
                             "org": org["nombre"], "tipo": "aprobacion_pendiente",
                             "expediente": exp["denominacion"]})
+                        alertas_org_actual.append({
+                            "titulo": f"Aprobación vencida: {exp['denominacion']}",
+                            "descripcion": f"En revisión hace {dias_sin_actividad} días (plazo supervisor: {org['plazo_aprobacion_supervisor']} días)",
+                            "severidad": "alta", "expediente_id": exp_id,
+                            "asignado_a": exp["asignado_a"]})
 
                 # ── 4. Rescreening de sanciones ──────────────
                 ultimo_screening = await conn.fetchrow(
@@ -1495,8 +1507,19 @@ async def ejecutar_agente3(db=Depends(get_db), user=Depends(require_admin)):
                             alertas_generadas.append({
                                 "org": org["nombre"], "tipo": "sancion_nueva",
                                 "expediente": exp["denominacion"], "hits": num_hits})
+                            alertas_org_actual.append({
+                                "titulo": f"⚠️ ALERTA SANCIONES: {exp['denominacion']}",
+                                "descripcion": f"Rescreening detectó {num_hits} coincidencia(s) en listas de sanciones",
+                                "severidad": "critica", "expediente_id": exp_id,
+                                "asignado_a": exp["asignado_a"]})
                     except Exception as e:
                         pass  # No interrumpir el ciclo por un fallo de rescreening individual
+
+            # ── Enviar resumen de alertas de esta organización ──
+            try:
+                await notificar_resumen_alertas(conn, org_id, org["nombre"], alertas_org_actual)
+            except Exception as e:
+                print(f"[agente3] Error enviando notificaciones de {org['nombre']}: {e}")
 
     return {
         "ejecutado_en":      ahora.isoformat(),
