@@ -6,10 +6,12 @@ JRV Lab S.L. · 2026
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
+from app.auth import hash_password, verificar_password, crear_token, get_current_user, require_supervisor, require_admin
 import asyncpg
 import os
 import uuid
@@ -829,7 +831,6 @@ async def agente_analizar(req: AgenteRequest):
         return {"ok": False, "error": str(e)}
 
 # ── AUTENTICACIÓN JWT ─────────────────────────────────────
-from app.auth import hash_password, verificar_password, crear_token, get_current_user, require_supervisor, require_admin
 from fastapi.security import OAuth2PasswordRequestForm
 
 @app.post("/auth/login", tags=["Auth"])
