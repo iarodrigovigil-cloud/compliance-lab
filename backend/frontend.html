@@ -187,19 +187,12 @@ tr:hover td { background: #f9fafb; }
   <div class="sidebar">
     <div class="sidebar-logo">
       <div class="sidebar-logo-title">🛡️ Compliance Lab</div>
-      <div class="sidebar-logo-sub">JRV Lab S.L. · PoC Fase 1</div>
+      <div class="sidebar-logo-sub" id="sidebar-org-nombre">JRV Lab S.L.</div>
     </div>
-    <div class="sidebar-nav">
-      <div class="nav-section">Principal</div>
-      <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon">📊</span> Dashboard</div>
-      <div class="nav-item" onclick="showPage('expedientes',this)"><span class="nav-icon">📁</span> Expedientes</div>
-      <div class="nav-section">Herramientas</div>
-      <div class="nav-item" onclick="showPage('subir',this)"><span class="nav-icon">📤</span> Subir Documento</div>
-      <div class="nav-item" onclick="showPage('audit',this)"><span class="nav-icon">🔗</span> Audit Trail</div>
-      <div class="nav-section">AML Officer</div>
-      <div class="nav-item" onclick="showPage('aml',this)"><span class="nav-icon">⚖️</span> Panel AML</div>
+    <div class="sidebar-nav" id="sidebar-nav">
+      <!-- Se construye dinámicamente según el rol del usuario -->
     </div>
-    <div class="sidebar-footer">v0.3.0-poc · © 2026 JRV Lab</div>
+    <div class="sidebar-footer">v1.0.0 · © 2026 JRV Lab</div>
   </div>
 
   <!-- MAIN -->
@@ -300,6 +293,45 @@ tr:hover td { background: #f9fafb; }
         </div>
       </div>
 
+      <!-- NUEVAS PÁGINAS POR ROL -->
+      <div class="page" id="page-revision">
+        <div class="card">
+          <div class="card-header"><div class="card-title">✅ Cola de Revisión · Supervisor</div></div>
+          <div id="page-revision-contenido" class="empty">Cargando...</div>
+        </div>
+      </div>
+
+      <div class="page" id="page-alertas">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🚨 Alertas Activas</div>
+            <button class="btn btn-outline" style="font-size:12px" onclick="cargarAlertas()">↻ Actualizar</button>
+          </div>
+          <div id="page-alertas-contenido" class="empty">Cargando...</div>
+        </div>
+      </div>
+
+      <div class="page" id="page-calidad">
+        <div class="card">
+          <div class="card-header"><div class="card-title">📈 Panel de Calidad KYC</div></div>
+          <div id="page-calidad-contenido" class="empty">Cargando...</div>
+        </div>
+      </div>
+
+      <div class="page" id="page-usuarios">
+        <div class="card">
+          <div class="card-header"><div class="card-title">👥 Gestión de Usuarios</div></div>
+          <div id="page-usuarios-contenido" class="empty">Cargando...</div>
+        </div>
+      </div>
+
+      <div class="page" id="page-agente3">
+        <div class="card">
+          <div class="card-header"><div class="card-title">🤖 Agente 3 · Rescreening y Alertas</div></div>
+          <div id="page-agente3-contenido" class="empty">Cargando...</div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -388,18 +420,28 @@ function showPage(name, el) {
   if (el) el.classList.add('active');
   const titulos = {
     dashboard: ['Dashboard', 'Resumen general · KYC Automatizado'],
-    expedientes: ['Expedientes KYC', 'Gestión de expedientes'],
+    expedientes: ['Expedientes KYC', 'Gestión de expedientes · Tu organización'],
     subir: ['Subir Documento', 'Procesamiento automático con LegNER'],
     audit: ['Audit Trail', 'Registro inmutable · AMLR 2024'],
-    aml: ['Panel AML Officer', 'Segunda Línea de Defensa · Scoring EBR · SAR']
+    aml: ['Panel AML Officer', 'Segunda Línea de Defensa · Scoring EBR · SAR'],
+    revision: ['Cola de Revisión', 'Expedientes pendientes de aprobación · Supervisor'],
+    alertas: ['Alertas Activas', 'Agente 3 · Supervisión continua · Art. 9 Ley 10/2010'],
+    calidad: ['Panel de Calidad', 'Métricas KYC · Agente 2 · Art. 26 Ley 10/2010'],
+    usuarios: ['Gestión de Usuarios', 'Administración de usuarios y roles'],
+    agente3: ['Agente Rescreening', 'Rescreening manual · Alertas · Art. 9 Ley 10/2010'],
   };
-  document.getElementById('topbar-title').textContent = titulos[name][0];
-  document.getElementById('topbar-sub').textContent = titulos[name][1];
-  if (name === 'dashboard') cargarDashboard();
+  document.getElementById('topbar-title').textContent = (titulos[name]||[name,''])[0];
+  document.getElementById('topbar-sub').textContent   = (titulos[name]||['',name])[1];
+  if (name === 'dashboard')   cargarDashboard();
   if (name === 'expedientes') cargarExpedientes();
-  if (name === 'subir') cargarSelectExpedientes();
-  if (name === 'audit') cargarSelectAudit();
-  if (name === 'aml') cargarSelectAML();
+  if (name === 'subir')       cargarSelectExpedientes();
+  if (name === 'audit')       cargarSelectAudit();
+  if (name === 'aml')         cargarSelectAML();
+  if (name === 'revision')    cargarRevision();
+  if (name === 'alertas')     cargarAlertas();
+  if (name === 'calidad')     cargarCalidad();
+  if (name === 'usuarios')    cargarUsuarios();
+  if (name === 'agente3')     renderAgente3();
 }
 
 function showModal(id) { document.getElementById('modal-' + id).classList.add('open'); }
@@ -415,26 +457,248 @@ function badgeRiesgo(r) {
   const l = {alto:'🔴 Alto',muy_alto:'🚨 Muy alto',medio:'🟡 Medio',bajo:'🟢 Bajo',sin_calcular:'— Sin calcular'};
   return `<span class="badge ${m[r]||'badge-sin'}">${l[r]||r}</span>`;
 }
+function badgeSupervision(s) {
+  const m = {borrador:'#6b7280',en_revision:'#d97706',aprobado:'#059669',rechazado:'#dc2626',archivado:'#9ca3af'};
+  const l = {borrador:'📝 Borrador',en_revision:'👁 En revisión',aprobado:'✅ Aprobado',rechazado:'❌ Rechazado',archivado:'📦 Archivado'};
+  return `<span style="background:${m[s]||'#6b7280'};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">${l[s]||s}</span>`;
+}
 
 async function cargarDashboard() {
+  // Métricas reales del tenant
   try {
-    const r = await fetch(API + '/stats');
-    const d = await r.json();
-    document.getElementById('s-total').textContent = d.expedientes.total_expedientes;
-    document.getElementById('s-proceso').textContent = d.expedientes.en_proceso;
-    document.getElementById('s-aprobados').textContent = d.expedientes.aprobados;
-    document.getElementById('s-docs').textContent = d.total_documentos;
-    document.getElementById('s-campos').textContent = d.total_campos_extraidos;
-  } catch(e) { document.getElementById('s-total').textContent = '⚠️'; }
-  const r2 = await fetch(API + '/expedientes?limite=5');
-  expedientes = await r2.json();
-  document.getElementById('tabla-dashboard').innerHTML = renderTabla(expedientes);
+    const r = await fetch(API + '/api/dashboard/metricas', { headers: getHeaders() });
+    if (r.ok) {
+      const d = await r.json();
+      document.getElementById('s-total').textContent    = d.total_expedientes ?? '—';
+      document.getElementById('s-proceso').textContent  = (d.por_estado?.en_proceso ?? 0);
+      document.getElementById('s-aprobados').textContent = (d.por_estado?.aprobado ?? 0);
+      document.getElementById('s-docs').textContent     = d.docs_procesados ?? '—';
+      // Mostrar alertas críticas si las hay
+      if (d.alertas_criticas > 0) {
+        const el = document.getElementById('s-total');
+        if (el) el.insertAdjacentHTML('afterend',
+          `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;
+           padding:8px 12px;margin-top:8px;font-size:12px;color:#dc2626">
+           🚨 <strong>${d.alertas_criticas}</strong> alerta(s) crítica(s) activa(s)
+           <a href="#" onclick="showPage('alertas')" style="color:#dc2626;text-decoration:underline;margin-left:8px">Ver →</a>
+           </div>`);
+      }
+    }
+  } catch(e) {
+    document.getElementById('s-total').textContent = '⚠️';
+  }
+  try {
+    const r2 = await fetch(API + '/expedientes?limite=5', { headers: getHeaders() });
+    if (r2.ok) {
+      expedientes = await r2.json();
+      document.getElementById('tabla-dashboard').innerHTML = renderTabla(expedientes);
+    }
+  } catch(e) {}
 }
 
 async function cargarExpedientes() {
-  const r = await fetch(API + '/expedientes');
+  const r = await fetch(API + '/expedientes', { headers: getHeaders() });
   expedientes = await r.json();
   document.getElementById('tabla-expedientes').innerHTML = renderTabla(expedientes);
+}
+
+// ── Supervisor: cola de revisión ─────────────────────────
+async function cargarRevision() {
+  const contenedor = document.getElementById('page-revision-contenido');
+  if (!contenedor) return;
+  contenedor.innerHTML = '<div class="loading"><div class="spinner"></div> Cargando...</div>';
+  try {
+    const r = await fetch(API + '/expedientes?limite=50', { headers: getHeaders() });
+    const todos = await r.json();
+    const enRevision = todos.filter(e => e.estado_supervision === 'en_revision');
+    if (!enRevision.length) {
+      contenedor.innerHTML = '<div class="empty">✅ No hay expedientes pendientes de revisión</div>';
+      return;
+    }
+    contenedor.innerHTML = `
+      <div style="margin-bottom:16px;font-size:13px;color:#6b7280">
+        ${enRevision.length} expediente(s) esperando aprobación
+      </div>
+      <table>
+        <tr><th>Código</th><th>Denominación</th><th>Estado</th><th>Riesgo</th><th>Score</th><th>Supervisión</th><th></th></tr>
+        ${enRevision.map(e => `<tr>
+          <td style="font-family:monospace;font-size:12px">${e.codigo}</td>
+          <td style="font-weight:600">${e.denominacion}</td>
+          <td>${badgeEstado(e.estado)}</td>
+          <td>${badgeRiesgo(e.nivel_riesgo)}</td>
+          <td style="font-weight:700;color:#003C96">${e.score_ebr ?? '—'}</td>
+          <td>${badgeSupervision(e.estado_supervision)}</td>
+          <td><button class="btn btn-primary" style="font-size:11px;padding:4px 10px"
+            onclick="abrirRevision('${e.id}','${e.denominacion}')">Revisar →</button></td>
+        </tr>`).join('')}
+      </table>`;
+  } catch(e) {
+    contenedor.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function abrirRevision(expId, nombre) {
+  // Cargar checklist del expediente y mostrar en Panel AML
+  showPage('aml', document.querySelector('.nav-item'));
+  setTimeout(() => {
+    const sel = document.getElementById('aml-expediente-select');
+    if (sel) { sel.value = expId; cargarPanelAML(expId); }
+  }, 300);
+}
+
+// ── Supervisor/Admin: alertas ─────────────────────────────
+async function cargarAlertas() {
+  const contenedor = document.getElementById('page-alertas-contenido');
+  if (!contenedor) return;
+  contenedor.innerHTML = '<div class="loading"><div class="spinner"></div> Cargando alertas...</div>';
+  try {
+    const r = await fetch(API + '/api/alertas?resuelta=false', { headers: getHeaders() });
+    if (!r.ok) throw new Error(await r.text());
+    const alertas = await r.json();
+    if (!alertas.length) {
+      contenedor.innerHTML = '<div class="empty">✅ No hay alertas activas</div>';
+      return;
+    }
+    const colores = { critica: '#fef2f2', alta: '#fff7ed', media: '#fffbeb', baja: '#f0fdf4' };
+    const bordes  = { critica: '#fca5a5', alta: '#fdba74', media: '#fde68a', baja: '#86efac' };
+    const iconos  = { critica: '🚨', alta: '⚠️', media: '📢', baja: 'ℹ️' };
+    contenedor.innerHTML = alertas.map(a => `
+      <div style="background:${colores[a.severidad]||'#f9fafb'};border:1px solid ${bordes[a.severidad]||'#e5e7eb'};
+           border-radius:8px;padding:14px 16px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-weight:700;font-size:13px">${iconos[a.severidad]||'•'} ${a.titulo}</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:10px;color:#9ca3af">${new Date(a.fecha_alerta).toLocaleString('es-ES')}</span>
+            <button class="btn" style="font-size:11px;padding:3px 10px;background:#fff;border:1px solid #d1d5db"
+              onclick="resolverAlerta('${a.id}',this)">Marcar resuelta</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#374151">${a.descripcion}</div>
+        ${a.expediente_nombre ? `<div style="font-size:11px;color:#6b7280;margin-top:4px">
+          Expediente: ${a.codigo} · ${a.expediente_nombre}</div>` : ''}
+      </div>`).join('');
+  } catch(e) {
+    contenedor.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+async function resolverAlerta(alertaId, btn) {
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const r = await fetch(`${API}/api/alertas/${alertaId}/resolver`, {
+      method: 'PATCH', headers: getHeaders()
+    });
+    if (r.ok) { btn.closest('div[style]').style.opacity = '0.4'; btn.textContent = '✓ Resuelta'; }
+  } catch(e) { btn.disabled = false; btn.textContent = 'Error'; }
+}
+
+// ── Admin: panel calidad ──────────────────────────────────
+async function cargarCalidad() {
+  const contenedor = document.getElementById('page-calidad-contenido');
+  if (!contenedor) return;
+  try {
+    const r = await fetch(API + '/api/dashboard/metricas', { headers: getHeaders() });
+    const d = await r.json();
+    contenedor.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px">
+        ${[
+          ['Total expedientes', d.total_expedientes, '#003C96'],
+          ['En revisión', d.en_revision, '#d97706'],
+          ['Alertas activas', d.alertas_activas, d.alertas_criticas > 0 ? '#dc2626' : '#059669'],
+          ['Score promedio', d.score_promedio + '/100', '#0F6E56'],
+          ['Docs procesados', d.docs_procesados, '#6366f1'],
+        ].map(([label, val, color]) => `
+          <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;text-align:center">
+            <div style="font-size:28px;font-weight:800;color:${color}">${val ?? '—'}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:4px">${label}</div>
+          </div>`).join('')}
+      </div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px">
+        <div style="font-weight:700;margin-bottom:12px">Distribución por estado</div>
+        ${Object.entries(d.por_estado||{}).map(([estado, total]) =>
+          `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f3f4f6">
+            <span>${badgeEstado(estado)}</span><span style="font-weight:600">${total}</span>
+          </div>`).join('') || '<div class="empty">Sin datos</div>'}
+      </div>`;
+  } catch(e) {
+    contenedor.innerHTML = `<div class="empty">Error cargando métricas: ${e.message}</div>`;
+  }
+}
+
+// ── Admin: gestión de usuarios ────────────────────────────
+async function cargarUsuarios() {
+  const contenedor = document.getElementById('page-usuarios-contenido');
+  if (!contenedor) return;
+  contenedor.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const r = await fetch(API + '/api/usuarios', { headers: getHeaders() });
+    const usuarios = await r.json();
+    const rolBadge = r => ({admin:'#C4A24A',supervisor:'#0F6E56',aml_officer:'#003C96'}[r]||'#6b7280');
+    contenedor.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button class="btn btn-primary" onclick="showModal('nuevo-usuario')">+ Invitar usuario</button>
+      </div>
+      <table>
+        <tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Último acceso</th><th>Estado</th></tr>
+        ${usuarios.map(u => `<tr>
+          <td style="font-weight:600">${u.nombre}</td>
+          <td style="font-size:12px;color:#6b7280">${u.email}</td>
+          <td><span style="background:${rolBadge(u.rol)};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">
+            ${u.rol.replace('_',' ').toUpperCase()}</span></td>
+          <td style="font-size:12px;color:#9ca3af">${u.ultimo_acceso ? new Date(u.ultimo_acceso).toLocaleDateString('es-ES') : 'Nunca'}</td>
+          <td>${u.activo ? '<span style="color:#059669">✓ Activo</span>' : '<span style="color:#dc2626">✗ Inactivo</span>'}
+              ${u.bloqueado ? '<span style="color:#dc2626;margin-left:4px">🔒 Bloqueado</span>' : ''}</td>
+        </tr>`).join('')}
+      </table>`;
+  } catch(e) {
+    contenedor.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Admin: Agente 3 rescreening manual ───────────────────
+function renderAgente3() {
+  const contenedor = document.getElementById('page-agente3-contenido');
+  if (!contenedor) return;
+  contenedor.innerHTML = `
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;max-width:600px">
+      <div style="font-weight:700;font-size:15px;margin-bottom:8px">🤖 Agente 3 · Rescreening y Alertas</div>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:20px">
+        Ejecuta el ciclo completo de supervisión continua:<br>
+        • Rescreening OpenSanctions de todos los expedientes activos<br>
+        • Detección de expedientes abandonados<br>
+        • Detección de aprobaciones vencidas<br>
+        • Generación automática de alertas
+      </div>
+      <button class="btn btn-primary" id="btn-agente3" onclick="ejecutarAgente3()">
+        ▶ Ejecutar ciclo de rescreening
+      </button>
+      <div id="agente3-resultado" style="margin-top:16px"></div>
+    </div>`;
+}
+
+async function ejecutarAgente3() {
+  const btn = document.getElementById('btn-agente3');
+  const res = document.getElementById('agente3-resultado');
+  btn.disabled = true; btn.textContent = '⏳ Ejecutando...';
+  res.innerHTML = '';
+  try {
+    const r = await fetch(API + '/api/agente3/ejecutar', { method: 'POST', headers: getHeaders() });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+    res.innerHTML = `
+      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px">
+        <div style="font-weight:700;color:#059669;margin-bottom:8px">✅ Ciclo completado</div>
+        <div style="font-size:13px">Alertas generadas: <strong>${d.alertas_generadas}</strong></div>
+        ${d.detalle.length ? `<div style="margin-top:8px;font-size:12px;color:#374151">
+          ${d.detalle.map(a => `• ${a.tipo}: ${a.expediente} (${a.org})`).join('<br>')}
+        </div>` : '<div style="font-size:12px;color:#6b7280;margin-top:4px">Sin nuevas alertas</div>'}
+      </div>`;
+  } catch(e) {
+    res.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:14px;color:#dc2626">
+      ❌ Error: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Ejecutar ciclo de rescreening';
+  }
 }
 
 function renderTabla(exps) {
@@ -988,6 +1252,62 @@ function getHeaders() {
   };
 }
 
+// ── Navegación por rol ────────────────────────────────────
+const NAV_POR_ROL = {
+  aml_officer: [
+    { section: 'Principal' },
+    { page: 'dashboard',    icon: '📊', label: 'Dashboard' },
+    { page: 'expedientes',  icon: '📁', label: 'Mis Expedientes' },
+    { section: 'Trabajo KYC' },
+    { page: 'subir',        icon: '📤', label: 'Subir Documento' },
+    { page: 'audit',        icon: '🔗', label: 'Audit Trail' },
+    { section: 'AML Officer' },
+    { page: 'aml',          icon: '⚖️',  label: 'Panel AML' },
+  ],
+  supervisor: [
+    { section: 'Principal' },
+    { page: 'dashboard',    icon: '📊', label: 'Dashboard' },
+    { page: 'expedientes',  icon: '📁', label: 'Expedientes' },
+    { section: 'Supervisión' },
+    { page: 'revision',     icon: '✅', label: 'Cola de Revisión' },
+    { page: 'alertas',      icon: '🚨', label: 'Alertas Activas' },
+    { page: 'calidad',      icon: '📈', label: 'Panel de Calidad' },
+    { section: 'Herramientas' },
+    { page: 'audit',        icon: '🔗', label: 'Audit Trail' },
+    { page: 'aml',          icon: '⚖️',  label: 'Panel AML' },
+  ],
+  admin: [
+    { section: 'Principal' },
+    { page: 'dashboard',    icon: '📊', label: 'Dashboard' },
+    { page: 'expedientes',  icon: '📁', label: 'Expedientes' },
+    { section: 'Supervisión' },
+    { page: 'revision',     icon: '✅', label: 'Cola de Revisión' },
+    { page: 'alertas',      icon: '🚨', label: 'Alertas Activas' },
+    { page: 'calidad',      icon: '📈', label: 'Panel de Calidad' },
+    { section: 'Herramientas' },
+    { page: 'subir',        icon: '📤', label: 'Subir Documento' },
+    { page: 'audit',        icon: '🔗', label: 'Audit Trail' },
+    { page: 'aml',          icon: '⚖️',  label: 'Panel AML' },
+    { section: 'Administración' },
+    { page: 'usuarios',     icon: '👥', label: 'Usuarios' },
+    { page: 'agente3',      icon: '🤖', label: 'Agente Rescreening' },
+  ]
+};
+
+function construirNav(rol) {
+  const nav = NAV_POR_ROL[rol] || NAV_POR_ROL.aml_officer;
+  const sidebar = document.getElementById('sidebar-nav');
+  sidebar.innerHTML = nav.map(item => {
+    if (item.section) return `<div class="nav-section">${item.section}</div>`;
+    return `<div class="nav-item" onclick="showPage('${item.page}',this)">
+              <span class="nav-icon">${item.icon}</span> ${item.label}
+            </div>`;
+  }).join('');
+  // Marcar el primero como activo
+  const first = sidebar.querySelector('.nav-item');
+  if (first) first.classList.add('active');
+}
+
 async function doLogin() {
   const email  = document.getElementById('login-email').value.trim();
   const pass   = document.getElementById('login-pass').value;
@@ -1003,7 +1323,14 @@ async function doLogin() {
     const d = await r.json();
     if (!r.ok) { errDiv.textContent = d.detail || 'Credenciales incorrectas'; return; }
     authToken   = d.access_token;
-    currentUser = { email, nombre: d.nombre, rol: d.rol };
+    currentUser = {
+      email,
+      nombre:          d.nombre,
+      rol:             d.rol,
+      organizacion_id: d.organizacion_id,
+      org_nombre:      d.org_nombre,
+      org_tipo:        d.org_tipo,
+    };
     sessionStorage.setItem('cl_token', authToken);
     sessionStorage.setItem('cl_user', JSON.stringify(currentUser));
     mostrarApp();
@@ -1015,8 +1342,21 @@ async function doLogin() {
 function mostrarApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-screen').style.display   = 'block';
-  const userEl = document.getElementById('topbar-user');
-  if (userEl && currentUser) userEl.textContent = currentUser.nombre + ' · ' + currentUser.rol;
+
+  // Construir navegación según rol
+  if (currentUser) {
+    construirNav(currentUser.rol);
+    // Mostrar nombre de organización en sidebar
+    const orgEl = document.getElementById('sidebar-org-nombre');
+    if (orgEl) orgEl.textContent = currentUser.org_nombre || 'JRV Lab S.L.';
+    // Mostrar usuario en topbar con badge de rol
+    const userEl = document.getElementById('topbar-user');
+    const rolColors = { admin: '#C4A24A', supervisor: '#0F6E56', aml_officer: '#003C96' };
+    if (userEl) userEl.innerHTML =
+      `${currentUser.nombre} <span style="background:${rolColors[currentUser.rol]||'#6b7280'};
+       color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;margin-left:6px">
+       ${currentUser.rol.replace('_',' ').toUpperCase()}</span>`;
+  }
   cargarDashboard();
 }
 
@@ -1030,7 +1370,7 @@ function doLogout() {
   document.getElementById('login-pass').value  = '';
 }
 
-if (authToken) { mostrarApp(); }
+if (authToken && currentUser) { mostrarApp(); }
 else { document.getElementById('login-screen').style.display = 'flex'; }
 </script>
 
