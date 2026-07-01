@@ -181,6 +181,37 @@ tr:hover td { background: #f9fafb; }
 </style>
 </head>
 <body>
+
+<!-- PANTALLA DE LOGIN -->
+<div id="login-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,#003C96 0%,#0D1B2A 100%);z-index:9999;align-items:center;justify-content:center;flex-direction:column">
+  <div style="background:#fff;border-radius:16px;padding:40px;width:380px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+    <div style="text-align:center;margin-bottom:28px">
+      <div style="font-size:32px;margin-bottom:8px">🛡️</div>
+      <div style="font-size:20px;font-weight:800;color:#003C96">Compliance Lab</div>
+      <div style="font-size:12px;color:#6b7280;margin-top:4px">Plataforma KYC/AML · JRV Lab S.L.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email</label>
+      <input class="form-input" id="login-email" type="email" placeholder="usuario@organizacion.es"
+        onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Contraseña</label>
+      <input class="form-input" id="login-pass" type="password" placeholder="••••••••"
+        onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <div id="login-error" style="color:#dc2626;font-size:12px;margin-bottom:10px;min-height:18px"></div>
+    <button class="btn btn-primary" style="width:100%;padding:11px;font-size:14px" onclick="doLogin()">
+      Iniciar sesión
+    </button>
+    <div style="text-align:center;margin-top:16px;font-size:11px;color:#9ca3af">
+      v1.0.0 · © 2026 JRV Lab S.L.
+    </div>
+  </div>
+</div>
+
+<!-- APP PRINCIPAL -->
+<div id="app-screen" style="display:none">
 <div class="layout">
 
   <!-- SIDEBAR -->
@@ -1373,6 +1404,8 @@ function doLogout() {
 if (authToken && currentUser) { mostrarApp(); }
 else { document.getElementById('login-screen').style.display = 'flex'; }
 </script>
+
+</div> <!-- /app-screen -->
 
 <!-- ── Modal visor de documento con resaltado ── -->
 <div id="visor-modal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
